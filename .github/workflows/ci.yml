@@ -1,0 +1,81 @@
+# CI Pipeline — chạy tự động trên mọi PR và push lên main
+# Hoàn toàn FREE cho public repo (unlimited minutes)
+# Cho private repo: 2000 minutes/tháng free
+
+name: 🧪 CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+# Hủy workflow cũ nếu push liên tục
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================
+  # JOB 1: Lint + Type Check (chạy nhanh, ~30s)
+  # ============================================
+  lint:
+    name: 🔍 Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: bun run db:generate
+        env:
+          DATABASE_URL: file:./db/ci-test.db
+
+      - name: ESLint
+        run: bun run lint
+
+      - name: Type Check
+        run: bun run typecheck
+
+  # ============================================
+  # JOB 2: Build (chạy song song với lint)
+  # ============================================
+  build:
+    name: 🏗️ Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: bun run db:generate
+        env:
+          DATABASE_URL: file:./db/ci-test.db
+
+      - name: Build
+        run: bun run build
+        env:
+          DATABASE_URL: file:./db/ci-test.db
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: build-output
+          path: .next/
+          retention-days: 3

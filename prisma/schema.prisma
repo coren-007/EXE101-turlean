@@ -1,0 +1,127 @@
+// TutorConnect Platform - Connect tutors with parents/students
+// Inspired by Airbnb (discovery + map) and LinkedIn (trust + profile)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Development: SQLite (file:./db/custom.db)
+  // Production:  PostgreSQL (Supabase - FREE 500MB)
+  //   → Đổi provider thành "postgresql" khi deploy production
+  //   → Set DATABASE_URL = postgresql://...supabase.co:5432/postgres
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  passwordHash   String
+  name           String
+  role           String   @default("STUDENT") // TUTOR | STUDENT
+  phone          String?
+  avatar         String?
+  bio            String?
+  address        String?
+  lat            Float?
+  lng            Float?
+  district       String?
+  city           String?
+  // Tutor-specific fields
+  profession     String?
+  experienceYears Int?
+  hourlyRate     Int?
+  isVerified     Boolean  @default(false)
+  education      String?
+  // Default teaching mode preference
+  teachesAtStudentHome Boolean @default(true)
+  teachesAtOwnPlace    Boolean @default(true)
+  teachesOnline        Boolean @default(false)
+  travelRadiusKm       Int?    // how far tutor is willing to travel
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tutorSubjects   TutorSubject[]
+  bookingsAsTutor Booking[]     @relation("TutorBookings")
+  bookingsAsStudent Booking[]   @relation("StudentBookings")
+  reviewsGiven    Review[]      @relation("ReviewAuthor")
+  reviewsReceived Review[]      @relation("ReviewTarget")
+  availabilities  Availability[]
+  sessions        Session[]
+}
+
+model Subject {
+  id        String @id @default(cuid())
+  name      String
+  slug      String @unique
+  category  String // STEM | LANGUAGE | ART | OTHER
+  icon      String?
+  level     String? // PRIMARY | SECONDARY | HIGH | ALL
+  tutors    TutorSubject[]
+  bookings  Booking[]
+}
+
+model TutorSubject {
+  id          String  @id @default(cuid())
+  tutorId     String
+  subjectId   String
+  pricePerHour Int
+  description String?
+  tutor       User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  subject     Subject @relation(fields: [subjectId], references: [id])
+  @@unique([tutorId, subjectId])
+}
+
+model Booking {
+  id           String   @id @default(cuid())
+  studentId    String
+  tutorId      String
+  subjectId    String
+  mode         String   // TUTOR_TO_STUDENT | STUDENT_TO_TUTOR | ONLINE
+  date         String   // YYYY-MM-DD
+  startTime    String   // HH:MM
+  endTime      String   // HH:MM
+  durationHours Int     @default(1)
+  status       String   @default("PENDING") // PENDING | CONFIRMED | COMPLETED | CANCELLED
+  address      String?
+  lat          Float?
+  lng          Float?
+  note         String?
+  totalAmount  Int
+  createdAt    DateTime @default(now())
+  student      User     @relation("StudentBookings", fields: [studentId], references: [id])
+  tutor        User     @relation("TutorBookings", fields: [tutorId], references: [id])
+  subject      Subject  @relation(fields: [subjectId], references: [id])
+  review       Review?
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  tutorId    String
+  studentId  String
+  bookingId  String   @unique
+  rating     Int      // 1-5
+  comment    String?
+  createdAt  DateTime @default(now())
+  tutor      User     @relation("ReviewTarget", fields: [tutorId], references: [id])
+  student    User     @relation("ReviewAuthor", fields: [studentId], references: [id])
+  booking    Booking  @relation(fields: [bookingId], references: [id])
+}
+
+model Availability {
+  id         String  @id @default(cuid())
+  tutorId    String
+  dayOfWeek  Int     // 0=Sunday ... 6=Saturday
+  startTime  String  // HH:MM
+  endTime    String  // HH:MM
+  tutor      User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  userId     String
+  expiresAt  DateTime
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
