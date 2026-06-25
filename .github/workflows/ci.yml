@@ -72,5 +72,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with:
           name: build-output
-          path: .next/
+          path: |
+            .next/standalone/
+            .next/static/
           retention-days: 3
