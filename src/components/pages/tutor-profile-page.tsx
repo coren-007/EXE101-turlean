@@ -131,6 +131,7 @@ export function TutorProfilePage({ id }: { id: string }) {
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     fetch(`/api/tutors/${id}`)
       .then(r => r.json())

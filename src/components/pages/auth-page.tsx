@@ -49,10 +49,12 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
 
   // Reset district when city changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRegDistrict('')
   }, [regCity])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMode(initialMode)
   }, [initialMode])
 

@@ -39,6 +39,7 @@ export function ManageAvailabilityPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (user?.role === 'TUTOR') load()
   }, [user])
 
