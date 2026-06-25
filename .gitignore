@@ -43,7 +43,9 @@ next-env.d.ts
 local-*
 
 # database (SQLite - không commit DB file)
+/prisma/db/
 /db/
+*.db
 
 # uploaded files
 /upload/
