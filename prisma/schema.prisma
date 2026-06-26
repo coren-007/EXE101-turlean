@@ -6,12 +6,9 @@ generator client {
 }
 
 datasource db {
-  // Development: SQLite (file:./db/custom.db)
-  // Production:  PostgreSQL (Supabase - FREE 500MB)
-  //   → Đổi provider thành "postgresql" khi deploy production
-  //   → Set DATABASE_URL = postgresql://...supabase.co:5432/postgres
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
