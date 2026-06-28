@@ -463,12 +463,12 @@ const STUDENTS = [
 async function main() {
   console.log('🌱 Seeding database (expanded: all grades + 5 cities)...')
 
-  // Clean up
+  // Clean up in correct order (children before parents)
+  await db.session.deleteMany()
+  await db.availability.deleteMany()
   await db.review.deleteMany()
   await db.booking.deleteMany()
-  await db.availability.deleteMany()
   await db.tutorSubject.deleteMany()
-  await db.session.deleteMany()
   await db.user.deleteMany()
   await db.subject.deleteMany()
 
