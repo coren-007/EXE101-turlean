@@ -38,9 +38,14 @@ async function sendEmail(to: string, subject: string, text: string): Promise<boo
 }
 
 export async function GET(req: Request) {
-  // Verify cron secret (Vercel automatically sends this header)
+  // Require a configured secret and verify Vercel's authorization header.
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret) {
+    return NextResponse.json({ error: 'Cron is not configured' }, { status: 503 })
+  }
+
   const authHeader = req.headers.get('authorization')
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
