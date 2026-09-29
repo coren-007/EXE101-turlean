@@ -18,6 +18,9 @@ import { toast } from 'sonner'
 import { formatVnd } from '@/lib/format'
 
 const DAY_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
+// Hiển thị lịch theo Thứ 2 → Chủ nhật (thống nhất với Trang quản lý)
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
+const DAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 const TIME_PRESETS = ['06:00', '08:00', '10:00', '14:00', '16:00', '18:00', '20:00']
 
 const CITIES = ['Hà Nội', 'TP.HCM', 'Đà Nẵng', 'Hải Phòng', 'Cần Thơ']
@@ -195,7 +198,7 @@ export function OnboardingPage() {
         })
       }
 
-      toast.success('Hoàn tất thiết lập hồ sơ!')
+      toast.success('Hồ sơ đã lên sóng! Yêu cầu từ phụ huynh sẽ xuất hiện trong Trang quản lý.')
       navigate({ name: 'dashboard' })
     } catch (e: any) {
       toast.error(e.message)
@@ -255,12 +258,14 @@ export function OnboardingPage() {
             <Sparkles className="h-3.5 w-3.5" />
             Thiết lập hồ sơ gia sư
           </div>
-          <h1 className="text-2xl md:text-3xl font-bold">Hoàn thiện hồ sơ để bắt đầu nhận học sinh</h1>
-          <p className="text-sm text-muted-foreground mt-1">Hồ sơ càng chi tiết, cơ hội được đặt lịch càng cao</p>
+          <h1 className="text-2xl md:text-3xl font-bold">Đăng hồ sơ một lần — học sinh tự tìm đến</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            3 bước, khoảng 5 phút. Xong là hồ sơ lên sóng: phụ huynh tìm thấy bạn, gửi yêu cầu — bạn chỉ cần xác nhận.
+          </p>
         </div>
 
-        {/* Progress */}
-        <div className="flex items-center justify-center gap-2 mb-8">
+        {/* Progress + nhãn bước */}
+        <div className="flex items-center justify-center gap-2 mb-2">
           {[1, 2, 3].map(s => (
             <div key={s} className="flex items-center gap-2">
               <div className={`h-9 w-9 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
@@ -273,6 +278,13 @@ export function OnboardingPage() {
               {s < 3 && <div className={`w-12 h-0.5 ${s < step ? 'bg-primary' : 'bg-border'}`} />}
             </div>
           ))}
+        </div>
+        <div className="flex items-center justify-center gap-2 mb-8 text-xs font-semibold">
+          <span className={step === 1 ? 'text-primary' : 'text-muted-foreground'}>Thông tin</span>
+          <span className="text-muted-foreground/50">·</span>
+          <span className={step === 2 ? 'text-primary' : 'text-muted-foreground'}>Môn & giá</span>
+          <span className="text-muted-foreground/50">·</span>
+          <span className={step === 3 ? 'text-primary' : 'text-muted-foreground'}>Lịch & phương thức</span>
         </div>
 
         <Card className="p-6 md:p-8">
@@ -510,36 +522,36 @@ export function OnboardingPage() {
               {/* Availability grid */}
               <div>
                 <Label className="text-sm font-semibold mb-3 block flex items-center gap-1">
-                  <Calendar className="h-4 w-4" /> Lịch trống trong tuần
+                  <Calendar className="h-4 w-4" /> Lịch dạy trong tuần
                 </Label>
                 <div className="overflow-x-auto scroll-area">
                   <div className="min-w-[600px]">
-                    <div className="grid grid-cols-8 gap-1 mb-1">
-                      <div className="text-[10px] text-muted-foreground text-center">Giờ</div>
-                      {DAY_NAMES.map(d => (
-                        <div key={d} className="text-[10px] font-semibold text-center py-1">
-                          {d === 'Chủ nhật' ? 'CN' : d.replace('Thứ ', 'T')}
+                    <div className="grid grid-cols-8 gap-1.5 mb-1.5">
+                      <div className="text-[10px] text-muted-foreground text-center flex items-center justify-center">Giờ</div>
+                      {DAY_ORDER.map(d => (
+                        <div key={d} className="text-[11px] font-bold text-center py-1">
+                          {DAY_SHORT[d]}
                         </div>
                       ))}
                     </div>
                     {TIME_PRESETS.map(t => (
-                      <div key={t} className="grid grid-cols-8 gap-1 mb-1">
-                        <div className="text-[10px] text-muted-foreground text-center flex items-center justify-center">
+                      <div key={t} className="grid grid-cols-8 gap-1.5 mb-1.5">
+                        <div className="text-[11px] text-muted-foreground flex items-center justify-center font-medium">
                           {t}
                         </div>
-                        {DAY_NAMES.map((_, dayIdx) => {
+                        {DAY_ORDER.map(dayIdx => {
                           const active = slots.some(s => s.dayOfWeek === dayIdx && s.startTime === t)
                           return (
                             <button
                               key={dayIdx}
                               onClick={() => toggleSlot(dayIdx, t)}
-                              className={`h-9 rounded-md text-[10px] font-medium transition-colors ${
+                              className={`h-10 rounded-xl text-[10px] font-bold transition-all ${
                                 active
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted hover:bg-primary/10 text-muted-foreground'
+                                  ? 'bg-primary text-primary-foreground shadow-e1 hover:bg-primary/90'
+                                  : 'bg-muted/70 hover:bg-primary/10 text-muted-foreground'
                               }`}
                             >
-                              {active ? <CheckCircle2 className="h-3.5 w-3.5 mx-auto" /> : '+'}
+                              {active ? <CheckCircle2 className="h-4 w-4 mx-auto" /> : '+'}
                             </button>
                           )
                         })}
@@ -548,7 +560,16 @@ export function OnboardingPage() {
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Đã chọn {slots.length} slot. Bấm vào ô để thêm/bỏ lịch trống.
+                  Đã mở <span className="font-bold text-foreground">{slots.length}</span> khung giờ. Bấm ô để thêm/bỏ — mỗi ô là 2 tiếng, có thể chỉnh lại bất cứ lúc nào trong Trang quản lý.
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-primary/5 border border-primary/15 p-3.5 text-xs leading-relaxed">
+                <p className="font-bold text-primary flex items-center gap-1.5 mb-1">
+                  <CheckCircle2 className="h-4 w-4" /> Sau khi đăng bạn không cần làm gì thêm
+                </p>
+                <p className="text-muted-foreground">
+                  Hồ sơ lên sóng ngay. Khi phụ huynh đặt lịch, yêu cầu hiện trong <span className="font-semibold text-foreground">Trang quản lý</span> kèm thông báo — bạn bấm Xác nhận là bắt đầu dạy.
                 </p>
               </div>
             </div>
@@ -572,7 +593,7 @@ export function OnboardingPage() {
             >
               {saving ? 'Đang lưu...' : (
                 step === 3 ? (
-                  <>Hoàn tất <CheckCircle2 className="h-4 w-4 ml-1" /></>
+                  <>Đăng hồ sơ lên sóng <CheckCircle2 className="h-4 w-4 ml-1" /></>
                 ) : (
                   <>Tiếp theo <ArrowRight className="h-4 w-4 ml-1" /></>
                 )

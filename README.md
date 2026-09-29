@@ -26,7 +26,9 @@
 
 ### Yêu cầu
 - **Bun** 1.0+ (khuyến nghị) hoặc Node.js 18+
-- Không cần cài đặt database riêng (SQLite tích hợp sẵn cho dev)
+- **PostgreSQL** — một trong hai cách:
+  - **Docker**: `docker compose up -d db` (service `db` sẵn trong repo)
+  - **Supabase** (FREE): tạo project tại https://supabase.com
 
 ### Cài đặt & chạy
 
@@ -38,13 +40,16 @@ cd EXE101-turlean
 # 2. Cài dependencies
 bun install
 
-# 3. Tạo database + generate Prisma client
+# 3. Tạo .env từ mẫu, điền DATABASE_URL + DIRECT_URL (PostgreSQL)
+cp .env.example .env
+
+# 4. Tạo schema trong database
 bun run db:push
 
-# 4. Seed dữ liệu mẫu (34 môn, 26 gia sư, 12 học sinh, 50 bookings)
+# 5. Seed dữ liệu mẫu (34 môn, 26 gia sư, 12 học sinh, khóa định kỳ demo)
 bun run seed
 
-# 5. Chạy dev server
+# 6. Chạy dev server
 bun run dev
 ```
 
@@ -69,7 +74,7 @@ Mở http://localhost:3000
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript 5 |
 | **Styling** | Tailwind CSS 4, shadcn/ui (New York), Lucide icons |
 | **Backend** | Next.js API Routes (built-in, không cần server riêng) |
-| **Database** | Prisma 6 ORM + SQLite (dev) → PostgreSQL (production) |
+| **Database** | Prisma 6 ORM + PostgreSQL (Supabase / Docker) |
 | **Auth** | Session-based (cookie httpOnly + bcrypt hashing) |
 | **State** | Zustand (client state) |
 | **Map** | Leaflet + OpenStreetMap + MarkerCluster (FREE, không API key) |
@@ -94,10 +99,14 @@ Mở http://localhost:3000
 - Demo account buttons (1-click fill credentials)
 
 ### 🔍 Tìm kiếm gia sư
-- **Filter đa tiêu chí**: cấp học (Tiểu học/THCS/THPT), phương thức dạy, tỉnh/thành, quận, giá (slider), đánh giá
-- **Search text**: theo tên gia sư, nghề nghiệp, bio, tên môn học
-- **2 view modes**: Grid (lưới card) và Map (bản đồ + list)
-- **Sort**: đánh giá, giá, khoảng cách
+- **Trang chủ search-first** (kiểu Airbnb): ô tìm kiếm 3 ngăn + chip danh mục + carousel gia sư nổi bật/lớp quanh bạn/mới nhất
+- **Filter nhanh bằng chip**: cấp học, phương thức dạy, khoảng giá, đánh giá (tương tự Grab/YouTube)
+- **Bộ lọc chi tiết** (Sheet): tỉnh/thành, quận, giá (slider), phương thức, đánh giá
+- **Search text**: theo tên gia sư, nghề nghiệp, bio, tên môn học (không phân biệt hoa thường)
+- **2 view modes**: Grid (lưới card) và Map (bản đồ + list song song)
+- **Sort**: đánh giá, giá, mới nhất, khoảng cách
+- **Phân trang**: 12 kết quả/trang + tổng số kết quả
+- **ONLINE**: lọc + đặt lịch dạy trực tuyến đầy đủ
 - **Geolocation**: "Vị trí của tôi" (GPS) hoặc "Chọn trên bản đồ" (click trên map)
 - **localStorage**: lưu filter + vị trí, khôi phục khi reload
 - **Empty state** đầy đủ cho cả grid và map view
@@ -124,29 +133,58 @@ Mở http://localhost:3000
 - Nút Favorite (lưu vào localStorage)
 
 ### 📅 Đặt lịch (Booking Flow)
-- Dialog: chọn môn → phương thức → ngày → slot → ghi chú
-- **Time slots tự generate** từ lịch trống của gia sư (30-min increments)
-- Validation: không đặt ngày quá khứ, duration 0.5-4h, mode hợp lệ
-- Conflict check: cả tutor và student không được trùng giờ
-- Total amount tự tính từ giá × duration
+- Dialog: chọn môn → phương thức → **số buổi (1 lẻ hoặc khóa định kỳ 2/4/8/12 buổi)** → ngày → slot → ghi chú
+- **Khóa học định kỳ**: các buổi cùng khóa chia sẻ `seriesId`, hiển thị "Buổi i/N" + tiến độ lớp học
+- **Time slots tự generate** từ lịch trống của gia sư (giữ đúng phút bắt đầu: 09:30 + 1.5h = 11:00)
+- Validation: không đặt ngày quá khứ, duration 0.5-4h, mode hợp lệ (zod cả client + server)
+- Conflict check **2 phía**: tutor và student đều không được trùng giờ
+- Total amount tự tính từ giá môn đã chọn × duration (server tự tính lại, không tin client)
+- **Bảng giá minh bạch** trong dialog: giá môn + số buổi + tổng tiền, 0% phí nền tảng
 
 ### 📊 Dashboard
-**Tutor**: Profile completeness, 4 stats (thu nhập/học sinh/giờ dạy/đánh giá), 3 tabs (Yêu cầu mới/Sắp dạy/Lịch sử), Reliability card
-**Student**: 4 stats (sắp học/đã học/tổng chi/số gia sư), 2 tabs (Sắp tới/Lịch sử), Reliability card
+**Tutor — Tutor Studio 1 trang, 3 tab workspace** (Tổng quan | Môn & giá | Lịch dạy):
+- Tổng quan: 4 stats (thu nhập buổi đã hoàn thành/học sinh/giờ dạy/đánh giá), yêu cầu chờ xác nhận, lịch tuần, lớp đang dạy, Reliability card
+- Môn & giá: sửa giá inline tại chỗ, thêm môn theo nhóm, xóa từng dòng
+- Lịch dạy: lưới tuần T2→CN bấm bật/tắt khung giờ, dialog khung giờ tùy chỉnh
 
-### 🛡️ Hệ thống Hủy lịch + Vi phạm
-- **Bắt buộc lý do hủy** (≥ 5 ký tự)
-- **4 mức vi phạm** tùy ai hủy + status + thời gian:
-  - Tutor hủy CONFIRMED < 2h → VI PHẠM NGHIÊM TRỌNG (-20 điểm)
-  - Tutor hủy CONFIRMED < 24h → VI PHẠM (-20 điểm)
-  - Tutor hủy CONFIRMED ≥ 24h → CẢNH BÁO (-10 điểm)
-  - Student/Tutor hủy PENDING → cùng quy tắc (-15/-5/0)
-- **Reliability score**: 100 - violations×15 - warnings×5
+**Student**: 4 stats, banner "N yêu cầu đang chờ xác nhận", lịch tuần, lớp đang theo học (tiến độ + nút Nhắn tin), tabs Sắp tới/Lịch sử, Reliability card
+
+### 📆 Lớp học định kỳ & quản lý lớp
+- Đặt **khóa học 2/4/8/12 buổi** theo tuần (use case thật của gia sư)
+- Dashboard nhóm theo **lớp học** (đối tác × môn): tiến độ x/y buổi, buổi tới, tổng tiền đã hoàn thành, badge trạng thái
+- **Lịch tuần 7 ô** (T2→CN) với điều hướng trước/sau cho cả 2 vai trò
+
+### 💬 Tin nhắn & Thông báo
+- **Hội thoại 1-1** gia sư ↔ phụ huynh (mỗi cặp đúng 1 hội thoại)
+- **Tin nhắn hệ thống tự động**: đặt lịch / xác nhận / hoàn thành / hủy kèm lý do → hiện dạng thẻ "Thông báo lớp học" trong luồng chat
+- Badge số tin chưa đọc trên header + danh sách hội thoại
+
+### ⭐ Đánh giá 2 chiều
+- Dialog đánh giá thật (sao 1-5 + nhận xét) cho mọi buổi COMPLETED chưa đánh giá
+- Tutor chỉ đánh dấu COMPLETED **sau** giờ học; avgRating tính từ toàn bộ review
+
+### 🛡️ Hệ thống Hủy lịch + Điểm uy tín (Reliability)
+- **Bắt buộc lý do hủy** (≥ 5 ký tự), mọi lần hủy được ghi lại kèm mức độ vi phạm
+- **8 quy tắc trừ điểm** (công khai, công bằng 2 chiều):
+
+| Ai hủy | Trạng thái | Độ sát giờ | Mức độ | Trừ điểm |
+|---|---|---|---|---|
+| Gia sư | CONFIRMED | < 2h | SEVERE | -20 |
+| Gia sư | CONFIRMED | < 24h | VIOLATION | -15 |
+| Gia sư | CONFIRMED | ≥ 24h | WARNING | -10 |
+| Học sinh | CONFIRMED | < 2h | VIOLATION | -15 |
+| Học sinh | CONFIRMED | < 24h | WARNING | -10 |
+| Học sinh | CONFIRMED | ≥ 24h | MINOR | -5 |
+| Bất kỳ | PENDING | ≥ 24h | NONE | 0 |
+| Bất kỳ | PENDING | < 24h | MINOR | -5 |
+
+- **Reliability score** = max(0, 100 − tổng điểm trừ)
 - **Tier**: XUẤT SẮC (≥90) → TỐT (70-89) → TRUNG BÌNH (50-69) → CẦN CẢI THIỆN (<50)
-- **Public reliability**: student xem độ tin cậy của tutor trước khi đặt
+- **Công khai 2 chiều**: phụ huynh xem điểm gia sư trước khi đặt; mỗi người xem điểm của chính mình
 
 ### 🧙 Onboarding Wizard (Tutor mới)
-3 bước: Thông tin chuyên môn → Môn dạy + giá → Phương thức & lịch dạy
+3 bước: Thông tin chuyên môn → Môn dạy + giá → Phương thức & lịch dạy (lưới T2→CN)
+Thông điệp: "Đăng hồ sơ một lần — học sinh tự tìm đến" — sau khi đăng không cần thao tác thêm.
 
 ### 📚 Quản lý môn dạy & Lịch trống
 - CRUD môn dạy (thêm/sửa/xóa với check booking active)
@@ -157,15 +195,16 @@ Mở http://localhost:3000
 
 ## 🗄️ Database Schema
 
-9 models: **User, Subject, TutorSubject, Booking, Review, Cancellation, Availability, Session, MediaFile**
+10 models: **User, Subject, TutorSubject, Booking, Cancellation, Review, Availability, Conversation, Message, Session**
 
 ```
 User (Student/Tutor)
 ├── TutorSubject ←→ Subject (môn dạy + giá)
-├── Booking ←→ Subject (lịch đặt)
+├── Booking ←→ Subject (lịch đặt, khóa định kỳ seriesId)
 │   ├── Review (đánh giá sau buổi học)
-│   └── Cancellation (record hủy + vi phạm)
+│   └── Cancellation (record hủy + mức vi phạm)
 ├── Availability (lịch trống theo tuần)
+├── Conversation → Message (tin nhắn 1-1 + tin hệ thống)
 └── Session (session đăng nhập)
 ```
 
@@ -183,8 +222,9 @@ User (Student/Tutor)
 | | `GET /api/tutors/me/stats` |
 | **Bookings** | `GET/POST /api/bookings`, `PATCH /api/bookings`, `POST /api/bookings/[id]/cancel` |
 | **Reviews** | `POST /api/reviews` |
+| **Messaging** | `GET /api/conversations`, `GET /api/conversations/[id]` (tin nhắn + đánh dấu đã đọc) |
 | **Violations** | `GET /api/users/me/violations` |
-| **Other** | `GET /api/subjects`, `GET /api/locations`, `GET /api/health` |
+| **Other** | `GET /api/subjects`, `GET /api/locations`, `GET /api/health`, `POST /api/cron/reminder` |
 
 ---
 
@@ -200,13 +240,13 @@ User (Student/Tutor)
 | **UptimeRobot** | Uptime monitoring | 50 monitors |
 
 ### CI Pipeline (`.github/workflows/ci.yml`)
-Tự động chạy khi push/PR lên `main` hoặc `staging`:
-1. **Lint job**: Install → Generate Prisma → ESLint
-2. **Build job**: Install → Generate Prisma → Build Next.js
+Tự động chạy khi push/PR lên `main` hoặc `staging` (Bun):
+1. **Lint job**: Install → Generate Prisma → ESLint → Type Check
+2. **Build job**: Install → Generate Prisma → Build Next.js (standalone)
 
 ### Deploy lên Vercel
-1. Import repo trên https://vercel.com
-2. Set `DATABASE_URL` = Supabase PostgreSQL connection string
+1. Import repo trên https://vercel.com (Bun được cấu hình sẵn trong `vercel.json`)
+2. Set env vars: `DATABASE_URL` (pooled) + `DIRECT_URL` (direct) = Supabase connection strings
 3. Auto-deploy khi push `main`
 
 Xem hướng dẫn chi tiết: **[DEPLOYMENT.md](./DEPLOYMENT.md)**
@@ -215,13 +255,14 @@ Xem hướng dẫn chi tiết: **[DEPLOYMENT.md](./DEPLOYMENT.md)**
 
 ```bash
 bun run dev          # Dev server (port 3000)
-bun run build        # Build production
+bun run build        # Build production (standalone)
 bun run start        # Chạy production server
 bun run lint         # ESLint check
 bun run typecheck    # TypeScript type check
-bun run db:push      # Push schema to DB
+bun run db:push      # Push schema to PostgreSQL (cần DIRECT_URL)
 bun run db:generate  # Generate Prisma client
 bun run seed         # Seed dữ liệu mẫu
+bun run smoke        # Smoke test 18 kịch bản (cần dev server + DB đã seed)
 ```
 
 ---
@@ -229,31 +270,36 @@ bun run seed         # Seed dữ liệu mẫu
 ## 📁 Cấu trúc thư mục
 
 ```
-├── .github/workflows/ci.yml       # CI pipeline
+├── .github/workflows/ci.yml       # CI pipeline (Bun: lint + typecheck + build)
 ├── .github/PULL_REQUEST_TEMPLATE.md
-├── prisma/schema.prisma           # 9 models DB
+├── prisma/schema.prisma           # 10 models DB (PostgreSQL)
 ├── scripts/seed.ts                # Seed data
+├── scripts/smoke-test.sh           # 18 kịch bản smoke test API
 ├── src/
 │   ├── app/
-│   │   ├── api/                   # 20+ API endpoints
-│   │   ├── globals.css            # Tailwind + custom CSS
-│   │   ├── layout.tsx             # Root layout
-│   │   └── page.tsx               # SPA router
+│   │   ├── api/                   # 23 API endpoints (zod validation)
+│   │   ├── globals.css            # Tailwind 4 + design system v2
+│   │   ├── layout.tsx             # Root layout (Be Vietnam Pro)
+│   │   └── page.tsx               # SPA router (theo vai trò)
 │   ├── components/
-│   │   ├── pages/                 # 9 page components
-│   │   ├── map/tutor-map.tsx      # Leaflet map
-│   │   ├── ui/                    # 50+ shadcn/ui components
-│   │   ├── header.tsx
-│   │   ├── footer.tsx
-│   │   └── tutor-card.tsx
+│   │   ├── pages/                 # 10 trang (thêm messages-page)
+│   │   ├── dashboard/             # Tutor Studio panels + lịch tuần + lớp học
+│   │   ├── map/tutor-map.tsx      # Leaflet map 2 chiều
+│   │   ├── ui/                    # shadcn/ui (đã tinh gọn còn thành phần dùng)
+│   │   ├── header.tsx / footer.tsx
+│   │   └── tutor-card.tsx         # Thẻ listing kiểu Airbnb
+│   ├── hooks/use-toast.ts
 │   └── lib/
 │       ├── auth.ts                # Session + bcrypt + distance
+│       ├── reliability.ts         # 8 quy tắc trừ điểm + tier
+│       ├── notify.ts              # Thông báo tự động vào hội thoại
 │       ├── db.ts                  # Prisma client
 │       ├── store.ts               # Zustand store
 │       └── format.ts              # formatVnd, formatDate, formatTime24h
-├── Dockerfile                     # Docker cho VPS
-├── docker-compose.yml
-├── vercel.json                    # Vercel deploy config
+├── Dockerfile                     # Docker (Bun, 3 stage) cho VPS
+├── docker-compose.yml             # Full stack: app + PostgreSQL 16
+├── vercel.json                    # Vercel deploy config (Bun + cron)
+├── CHANGELOG.md                   # Lịch sử thay đổi chi tiết
 ├── DEPLOYMENT.md                  # Hướng dẫn deploy
 └── QUICKSTART.md                  # Hướng dẫn chạy nhanh
 ```
@@ -262,40 +308,28 @@ bun run seed         # Seed dữ liệu mẫu
 
 ## 🗺️ Roadmap
 
-### ✅ Đã hoàn thành (MVP)
-- [x] Auth (register/login/logout, session-based)
-- [x] Tutor profile (LinkedIn-style) + reliability score
-- [x] Search với filter + map (Leaflet + OSM)
-- [x] Booking flow với validation + conflict check
-- [x] Dashboard (tutor + student) + Reliability card
-- [x] Onboarding wizard cho tutor mới
-- [x] Manage subjects + availability
-- [x] Hệ thống hủy lịch + tracking vi phạm (4 mức)
-- [x] Bản đồ tương tác 2 chiều (card ↔ marker)
-- [x] 5 thành phố + 34 môn học theo cấp lớp
-- [x] CI/CD pipeline (GitHub Actions + Vercel + Supabase)
-- [x] Docker + Health check endpoint
+### ✅ Đã hoàn thành (v1.0)
+- [x] Auth (register/login/logout, session-based, 2 vai trò)
+- [x] Tutor profile (LinkedIn-style) + điểm uy tín công khai (8 quy tắc)
+- [x] Search + filter + map (Leaflet + OSM) + phân trang + sort mới nhất
+- [x] Booking flow: validation zod + conflict check 2 phía + khóa định kỳ 2/4/8/12 buổi
+- [x] Dashboard 2 vai trò + Tutor Studio 1 trang (Tổng quan/Môn & giá/Lịch dạy)
+- [x] Tin nhắn 1-1 + tin hệ thống tự động + badge chưa đọc
+- [x] Review loop khép kín (COMPLETED sau giờ học → đánh giá → avgRating đầy đủ)
+- [x] Hủy lịch kèm lý do → trừ điểm uy tín theo 8 quy tắc
+- [x] Onboarding wizard + UX v2 chuẩn Airbnb/Grab/YouTube
+- [x] 5 thành phố + 34 môn học theo cấp lớp + ONLINE đầy đủ
+- [x] CI/CD (GitHub Actions + Vercel + Supabase) + Docker + PostgreSQL
 
-### 🔄 Đang phát triển
-- [ ] **AI Matching** ( ) — ghép học sinh ↔ gia sư thông minh
-- [ ] **Payment System** ( ) — VNPay/MoMo tích hợp
-- [ ] **Admin Management** ( ) — dashboard quản trị
-- [ ] **Media & Profile** ( ) — upload avatar + bằng cấp
-- [ ] **Realtime Chat** ( ) — Socket.io chat + notification
-- [ ] **Statistics** ( ) — biểu đồ doanh thu + booking
-
-### 📋 Cần làm tiếp
-- [ ] AI Search bằng ngôn ngữ tự nhiên ("gia sư toán cấp 2 cầu giấy")
-- [ ] AI Chatbot hỗ trợ tìm gia sư
-- [ ] Upload avatar thật (Cloudinary)
-- [ ] Trang Favorites
-- [ ] Dark mode toggle button
-- [ ] Email notification (Resend)
-- [ ] Tutor no-show detection (cron job)
-- [ ] Tự động khóa tài khoản nếu reliability < 30
-- [ ] Migrate SQLite → PostgreSQL (Supabase) cho production
-- [ ] Sentry error monitoring
-- [ ] PWA (Progressive Web App)
+### 🔄 Kế hoạch tiếp theo
+- [ ] **Payment** — VNPay/MoMo tích hợp
+- [ ] **Xác minh 2 bước** — OTP email/SĐT, upload bằng cấp
+- [ ] **Admin dashboard** — quản trị viên
+- [ ] **Upload avatar** thật (Cloudinary)
+- [ ] **Email notification** (Resend) + nhắc buổi học qua email
+- [ ] **SEO** — routing theo URL thật cho trang gia sư (chia sẻ/index tốt hơn)
+- [ ] **Sentry** error monitoring
+- [ ] **PWA** (Progressive Web App)
 
 ---
 
@@ -332,6 +366,6 @@ chore:    config, dependencies  (vd: chore: thêm leaflet package)
 
 ---
 
-**Liên hệ**: hotro@giasu.vn | 1900 1234
+**Liên hệ**: https://github.com/coren-007/EXE101-turlean
 
 *Made with ❤️ tại Việt Nam*

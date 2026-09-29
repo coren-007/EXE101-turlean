@@ -18,15 +18,14 @@ import { RatingStars } from '@/components/rating-stars'
 import {
   MapPin, Home, School, Star, BadgeCheck, Clock, Briefcase, GraduationCap,
   Phone, Calendar, ArrowLeft, Share2, Heart, MessageSquare, Navigation,
-  CheckCircle2, X, Info, Wallet, AlertCircle
+  CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2
 } from 'lucide-react'
-import { formatVnd, timeAgo } from '@/lib/format'
+import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
 
 interface TutorDetail {
   id: string
   name: string
-  email: string
   avatar?: string | null
   bio?: string | null
   profession?: string | null
@@ -34,7 +33,7 @@ interface TutorDetail {
   education?: string | null
   hourlyRate?: number | null
   isVerified?: boolean
-  phone?: string | null
+  phone?: string | null // P0-3: chỉ có giá trị khi đã có booking với gia sư này
   district?: string | null
   city?: string | null
   address?: string | null
@@ -61,6 +60,14 @@ interface TutorDetail {
   }[]
   avgRating: number
   reviewCount: number
+  // P0-1: điểm tin cậy công khai
+  reliability?: {
+    score: number
+    tier: { key: string; label: string; color: string }
+    totalCancellations: number
+    violations: number
+    warnings: number
+  } | null
   reviews: {
     id: string
     rating: number
@@ -114,6 +121,16 @@ function isDateAvailable(
   return availabilities.some(a => a.dayOfWeek === dayOfWeek)
 }
 
+// Cộng n tuần vào YYYY-MM-DD (dùng cho hiển thị buổi cuối của khóa)
+function addWeeksLocal(dateStr: string, weeks: number): string {
+  const d = new Date(`${dateStr}T00:00`)
+  d.setDate(d.getDate() + weeks * 7)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export function TutorProfilePage({ id }: { id: string }) {
   const { navigate, user } = useApp()
   const [tutor, setTutor] = useState<TutorDetail | null>(null)
@@ -129,9 +146,55 @@ export function TutorProfilePage({ id }: { id: string }) {
   const [note, setNote] = useState('')
   const [address, setAddress] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Mục đích 1 — lớp học định kỳ: 1 = buổi lẻ, >= 2 = khóa lặp mỗi tuần cùng khung giờ
+  const [repeatWeeks, setRepeatWeeks] = useState(1)
+  const [isFavorite, setIsFavorite] = useState(false) // P1: favorite qua localStorage
+
+  // P1: favorite từ localStorage
+  useEffect(() => {
+    try {
+      const favs = JSON.parse(localStorage.getItem('favorite_tutors') ?? '[]')
+      setIsFavorite(favs.includes(id))
+    } catch { /* ignore */ }
+  }, [id])
+
+  // P1: nút yêu thích — lưu vào localStorage
+  const toggleFavorite = () => {
+    try {
+      const favs = JSON.parse(localStorage.getItem('favorite_tutors') ?? '[]')
+      const next = favs.includes(id) ? favs.filter((f: string) => f !== id) : [...favs, id]
+      localStorage.setItem('favorite_tutors', JSON.stringify(next))
+      setIsFavorite(next.includes(id))
+      toast.success(next.includes(id) ? 'Đã lưu vào danh sách yêu thích' : 'Đã bỏ khỏi danh sách yêu thích')
+    } catch {
+      toast.error('Không thể lưu danh sách yêu thích')
+    }
+  }
+
+  // P1: chia sẻ hồ sơ — native share trên mobile, copy link trên desktop
+  const handleShare = async () => {
+    const url = `${window.location.origin}/?view=tutor&id=${id}`
+    const shareData = {
+      title: tutor ? `Gia sư ${tutor.name}` : 'GiaSuConnect',
+      text: tutor ? `${tutor.name} — ${tutor.profession ?? ''} tại ${tutor.district ?? ''}` : '',
+      url,
+    }
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(shareData)
+        return
+      } catch { /* user hủy share — bỏ qua */ }
+    }
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success('Đã copy link hồ sơ')
+    } catch {
+      toast.error('Không thể copy link')
+    }
+  }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setLoading(true)
     fetch(`/api/tutors/${id}`)
       .then(r => r.json())
@@ -153,7 +216,29 @@ export function TutorProfilePage({ id }: { id: string }) {
       toast.error('Gia sư không thể tự đặt lịch với gia sư khác')
       return
     }
+    setRepeatWeeks(1)
     setBookingOpen(true)
+  }
+
+  // Mục đích 2 — mở hội thoại với gia sư (chat trong app)
+  const handleStartConversation = async () => {
+    if (!user) {
+      toast.info('Vui lòng đăng nhập để nhắn tin')
+      navigate({ name: 'login' })
+      return
+    }
+    try {
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otherUserId: id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Không thể mở hội thoại')
+      navigate({ name: 'messages', conversationId: data.conversationId })
+    } catch (e: any) {
+      toast.error(e.message || 'Không thể mở hội thoại')
+    }
   }
 
   const handleSubmitBooking = async () => {
@@ -168,10 +253,12 @@ export function TutorProfilePage({ id }: { id: string }) {
     }
 
     const subject = tutor.subjects.find(s => s.id === selectedSubject)!
-    const startHour = parseInt(bookingTime.split(':')[0])
-    const endHour = Math.floor(startHour + duration)
-    const endMin = (duration % 1) * 60
-    const endTime = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(0, '0').padStart(2, '0').slice(0, 2)}`
+    // P0-5: tính giờ kết thúc CHÍNH XÁC theo phút bắt đầu (09:30 + 1.5h = 11:00)
+    const [startH, startM] = bookingTime.split(':').map(Number)
+    const totalEndMin = startH * 60 + startM + Math.round(duration * 60)
+    const endHour = Math.floor(totalEndMin / 60)
+    const endMin = totalEndMin % 60
+    const endTime = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}`
 
     setSubmitting(true)
     try {
@@ -187,15 +274,31 @@ export function TutorProfilePage({ id }: { id: string }) {
           endTime,
           durationHours: duration,
           note,
-          address: bookingMode === 'TUTOR_TO_STUDENT' ? address : tutor.address,
-          lat: bookingMode === 'TUTOR_TO_STUDENT' ? null : tutor.lat,
-          lng: bookingMode === 'TUTOR_TO_STUDENT' ? null : tutor.lng,
+          repeatWeeks,
+          address: bookingMode === 'TUTOR_TO_STUDENT' ? address : bookingMode === 'STUDENT_TO_TUTOR' ? tutor.address ?? undefined : undefined,
+          lat: bookingMode === 'STUDENT_TO_TUTOR' ? tutor.lat ?? undefined : undefined,
+          lng: bookingMode === 'STUDENT_TO_TUTOR' ? tutor.lng ?? undefined : undefined,
         })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
 
-      toast.success(`Đã gửi yêu cầu đặt lịch với ${tutor.name}`)
+      // Mục đích 1 + 3: phản hồi minh bạch — báo rõ số buổi đã tạo + các tuần bị bỏ qua
+      if (data.created > 1) {
+        toast.success(
+          `Đã tạo khóa học ${data.created} buổi với ${tutor.name} (mỗi tuần 1 buổi)` +
+          (data.skipped?.length ? ` — bỏ qua ${data.skipped.length} tuần trùng lịch` : ''),
+          { duration: 6000 },
+        )
+      } else {
+        toast.success(`Đã gửi yêu cầu đặt lịch với ${tutor.name}`)
+      }
+      if (data.skipped?.length) {
+        toast.info(
+          'Các tuần bị bỏ qua: ' + data.skipped.map((s: any) => `${s.date} (${s.reason})`).join('; '),
+          { duration: 8000 },
+        )
+      }
       setBookingOpen(false)
       navigate({ name: 'dashboard' })
     } catch (e: any) {
@@ -281,11 +384,16 @@ export function TutorProfilePage({ id }: { id: string }) {
               </div>
             </div>
             <div className="flex gap-2 sm:self-center">
-              <Button variant="outline" size="icon" title="Chia sẻ">
+              <Button variant="outline" size="icon" title="Chia sẻ hồ sơ" onClick={handleShare}>
                 <Share2 className="h-4 w-4" />
               </Button>
-              <Button variant="outline" size="icon" title="Lưu">
-                <Heart className="h-4 w-4" />
+              <Button
+                variant="outline"
+                size="icon"
+                title={isFavorite ? 'Bỏ khỏi danh sách yêu thích' : 'Lưu vào danh sách yêu thích'}
+                onClick={toggleFavorite}
+              >
+                <Heart className={`h-4 w-4 ${isFavorite ? 'fill-rose-500 text-rose-500' : ''}`} />
               </Button>
               <Button size="lg" onClick={handleOpenBooking} className="h-11 px-6">
                 <Calendar className="h-4 w-4 mr-1" /> Đặt lịch học
@@ -294,7 +402,7 @@ export function TutorProfilePage({ id }: { id: string }) {
           </div>
 
           {/* Quick stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4">
             <div className="rounded-xl bg-muted/50 p-3 text-center">
               <p className="text-xs text-muted-foreground">Đánh giá</p>
               <p className="text-lg font-bold flex items-center justify-center gap-1">
@@ -313,6 +421,16 @@ export function TutorProfilePage({ id }: { id: string }) {
             <div className="rounded-xl bg-muted/50 p-3 text-center">
               <p className="text-xs text-muted-foreground">Bài đánh giá</p>
               <p className="text-lg font-bold">{tutor.reviewCount}</p>
+            </div>
+            {/* P0-1: độ tin cậy công khai */}
+            <div className="rounded-xl bg-muted/50 p-3 text-center">
+              <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                <ShieldCheck className="h-3 w-3" /> Độ tin cậy
+              </p>
+              <p className="text-lg font-bold">
+                {tutor.reliability?.score ?? 100}
+                <span className="text-xs font-normal text-muted-foreground">/100</span>
+              </p>
             </div>
           </div>
         </div>
@@ -506,33 +624,40 @@ export function TutorProfilePage({ id }: { id: string }) {
             <Card className="p-5">
               <div className="flex items-baseline justify-between mb-1">
                 <span className="text-2xl font-bold text-primary">{formatVnd(tutor.hourlyRate || 0)}</span>
-                <span className="text-sm text-muted-foreground">/giờ</span>
+                <span className="text-sm text-muted-foreground">/giờ trở lên</span>
               </div>
-              <p className="text-xs text-muted-foreground mb-4">
-                Cao hơn 20% gia sư tương tự vì chất lượng và kinh nghiệm
-              </p>
 
               <Separator className="my-4" />
 
+              {/* P0-4: chỉ hiển thị thông tin THẬT — đã loại bỏ các cam kết bịa
+                  ("Đã xác minh bằng cấp" cứng, "Học thử miễn phí", "Phản hồi trong 2 giờ") */}
               <div className="space-y-2 mb-4">
+                {tutor.isVerified ? (
+                  <div className="flex items-center gap-2 text-sm">
+                    <BadgeCheck className="h-4 w-4 text-emerald-500" />
+                    <span>Đã xác minh</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Info className="h-4 w-4" />
+                    <span>Chưa xác minh</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <span>Đã xác minh bằng cấp</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <span>Phản hồi trong 2 giờ</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <span>Học thử miễn phí 30 phút</span>
+                  <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                  <span>
+                    Độ tin cậy {tutor.reliability?.score ?? 100}/100
+                    {tutor.reliability && (
+                      <span className="text-muted-foreground"> ({tutor.reliability.tier.label})</span>
+                    )}
+                  </span>
                 </div>
               </div>
 
               <Button className="w-full h-11 mb-2" onClick={handleOpenBooking}>
                 <Calendar className="h-4 w-4 mr-1" /> Đặt lịch học
               </Button>
-              <Button variant="outline" className="w-full" onClick={() => toast.info('Tính năng chat sẽ có sớm')}>
+              <Button variant="outline" className="w-full" onClick={handleStartConversation}>
                 <MessageSquare className="h-4 w-4 mr-1" /> Nhắn tin
               </Button>
 
@@ -543,7 +668,7 @@ export function TutorProfilePage({ id }: { id: string }) {
                   <Info className="h-3 w-3" /> Chưa thanh toán khi đặt lịch
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Wallet className="h-3 w-3" /> Thanh toán sau buổi học
+                  <Wallet className="h-3 w-3" /> Thanh toán trực tiếp sau buổi học
                 </div>
               </div>
             </Card>
@@ -556,7 +681,7 @@ export function TutorProfilePage({ id }: { id: string }) {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scroll-area">
           <DialogHeader>
             <DialogTitle>Đặt lịch học với {tutor.name}</DialogTitle>
-            <DialogDescription>Chọn thông tin buổi học. Gia sư sẽ xác nhận trong vòng 2 giờ.</DialogDescription>
+            <DialogDescription>Chọn thông tin buổi học. Gia sư sẽ xác nhận yêu cầu của bạn qua hệ thống.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-5 py-2">
@@ -576,10 +701,10 @@ export function TutorProfilePage({ id }: { id: string }) {
               </select>
             </div>
 
-            {/* Mode - the differentiator */}
+            {/* Mode - the differentiator (P1: thêm chế độ ONLINE) */}
             <div>
               <Label className="text-sm font-semibold mb-2 block">Phương thức học</Label>
-              <RadioGroup value={bookingMode} onValueChange={setBookingMode} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <RadioGroup value={bookingMode} onValueChange={setBookingMode} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {tutor.teachesAtStudentHome && (
                   <Label htmlFor="mode-tts" className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${bookingMode === 'TUTOR_TO_STUDENT' ? 'border-primary bg-primary/5' : 'border-border'}`}>
                     <div className="flex items-start gap-2">
@@ -590,7 +715,7 @@ export function TutorProfilePage({ id }: { id: string }) {
                           <span className="font-semibold text-sm">Gia sư đến nhà</span>
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                          Bạn ở trong bán kính {tutor.travelRadiusKm}km từ {tutor.district}
+                          Trong bán kính {tutor.travelRadiusKm}km từ {tutor.district}
                         </p>
                       </div>
                     </div>
@@ -607,6 +732,22 @@ export function TutorProfilePage({ id }: { id: string }) {
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                           {tutor.address}, {tutor.district}
+                        </p>
+                      </div>
+                    </div>
+                  </Label>
+                )}
+                {tutor.teachesOnline && (
+                  <Label htmlFor="mode-online" className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${bookingMode === 'ONLINE' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+                    <div className="flex items-start gap-2">
+                      <RadioGroupItem value="ONLINE" id="mode-online" className="mt-1" />
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <Video className="h-4 w-4 text-emerald-600" />
+                          <span className="font-semibold text-sm">Học trực tuyến</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Google Meet / Zoom — link gửi sau khi xác nhận
                         </p>
                       </div>
                     </div>
@@ -716,6 +857,74 @@ export function TutorProfilePage({ id }: { id: string }) {
               )}
             </div>
 
+            {/* Lớp học định kỳ (Mục đích 1 — quản lý lớp học 2 bên) */}
+            <div>
+              <Label className="text-sm font-semibold mb-2 block">Kiểu lịch học</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRepeatWeeks(1)}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
+                    repeatWeeks === 1 ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <Calendar className={`h-4 w-4 ${repeatWeeks === 1 ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <span className="font-semibold text-sm">Đặt 1 buổi</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Làm quen trước khi học dài hạn</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRepeatWeeks(prev => (prev === 1 ? 4 : prev))}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
+                    repeatWeeks > 1 ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <Repeat2 className={`h-4 w-4 ${repeatWeeks > 1 ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <span className="font-semibold text-sm">Khóa định kỳ</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Cùng khung giờ, mỗi tuần 1 buổi</p>
+                </button>
+              </div>
+
+              {repeatWeeks > 1 && (
+                <div className="mt-2.5 space-y-2">
+                  <div className="grid grid-cols-4 gap-2">
+                    {[2, 4, 8, 12].map(w => (
+                      <button
+                        key={w}
+                        type="button"
+                        onClick={() => setRepeatWeeks(w)}
+                        className={`py-2 rounded-lg text-sm font-medium border transition-colors ${
+                          repeatWeeks === w
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'border-border hover:border-primary/30'
+                        }`}
+                      >
+                        {w} buổi
+                      </button>
+                    ))}
+                  </div>
+                  {bookingDate && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Buổi đầu <span className="font-medium text-foreground">{formatDate(bookingDate)}</span>
+                      {' · '}buổi cuối{' '}
+                      <span className="font-medium text-foreground">
+                        {formatDate(addWeeksLocal(bookingDate, repeatWeeks - 1))}
+                      </span>
+                      {' · '}gia sư xác nhận từng buổi
+                    </p>
+                  )}
+                  <p className="text-[11px] text-emerald-600 flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 shrink-0" />
+                    Tuần nào bị trùng lịch sẽ được bỏ qua và báo rõ sau khi đặt
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Note */}
             <div>
               <Label className="text-sm font-semibold mb-2 block">Ghi chú (tùy chọn)</Label>
@@ -727,21 +936,45 @@ export function TutorProfilePage({ id }: { id: string }) {
               />
             </div>
 
-            {/* Price summary */}
+            {/* Bảng giá minh bạch (Mục đích 3) — đơn giá × giờ × số buổi, không phí ẩn */}
             <div className="rounded-xl bg-muted/50 p-4 space-y-1.5">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Học phí ({duration}h)</span>
-                <span className="font-semibold">{formatVnd((tutor.hourlyRate || 0) * duration)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Phí dịch vụ</span>
-                <span className="font-semibold text-emerald-600">Miễn phí</span>
-              </div>
-              <Separator className="my-2" />
-              <div className="flex justify-between">
-                <span className="font-semibold">Tổng cộng</span>
-                <span className="font-bold text-primary text-lg">{formatVnd((tutor.hourlyRate || 0) * duration)}</span>
-              </div>
+              {(() => {
+                const sel = tutor.subjects.find(s => s.id === selectedSubject)
+                const pricePerHour = sel?.pricePerHour ?? tutor.hourlyRate ?? 0
+                const perSession = Math.round(pricePerHour * duration)
+                return (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        {sel ? sel.name : 'Học phí'} — {formatVnd(pricePerHour)}/giờ × {duration}h
+                      </span>
+                      <span className="font-semibold">{formatVnd(perSession)}/buổi</span>
+                    </div>
+                    {repeatWeeks > 1 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Số buổi (khóa {repeatWeeks} tuần)</span>
+                        <span className="font-semibold">{repeatWeeks} buổi</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Phí nền tảng</span>
+                      <span className="font-semibold text-emerald-600">0đ — miễn phí</span>
+                    </div>
+                    <Separator className="my-2" />
+                    <div className="flex justify-between">
+                      <span className="font-semibold">
+                        Tổng cộng{repeatWeeks > 1 ? ` (${repeatWeeks} buổi)` : ''}
+                      </span>
+                      <span className="font-bold text-primary text-lg">
+                        {formatVnd(perSession * repeatWeeks)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground pt-1">
+                      Học phí thanh toán trực tiếp cho gia sư sau mỗi buổi — cả hai bên thấy cùng một con số, không phí ẩn.
+                    </p>
+                  </>
+                )
+              })()}
             </div>
           </div>
 

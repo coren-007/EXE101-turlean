@@ -116,7 +116,7 @@ const TUTORS = [
     subjects: ['toan-hoc', 'luyen-thi-thpt', 'boi-duong-hsg'],
     pricePerHour: 350000,
     location: { city: 'Hà Nội', district: 'Cầu Giấy' },
-    teachesAtStudentHome: true, teachesAtOwnPlace: true, travelRadiusKm: 8,
+    teachesAtStudentHome: true, teachesAtOwnPlace: true, teachesOnline: true, travelRadiusKm: 8,
   },
   {
     name: 'Trần Hoàng Long',
@@ -128,7 +128,7 @@ const TUTORS = [
     subjects: ['vat-ly', 'luyen-thi-thpt'],
     pricePerHour: 400000,
     location: { city: 'Hà Nội', district: 'Ba Đình' },
-    teachesAtStudentHome: true, teachesAtOwnPlace: true, travelRadiusKm: 10,
+    teachesAtStudentHome: true, teachesAtOwnPlace: true, teachesOnline: true, travelRadiusKm: 10,
   },
   {
     name: 'Lê Thị Thu Hà',
@@ -264,7 +264,7 @@ const TUTORS = [
     subjects: ['ielts', 'tieng-anh-giao-tiep', 'toeic'],
     pricePerHour: 600000,
     location: { city: 'TP.HCM', district: 'Quận 1' },
-    teachesAtStudentHome: true, teachesAtOwnPlace: true, travelRadiusKm: 12,
+    teachesAtStudentHome: true, teachesAtOwnPlace: true, teachesOnline: true, travelRadiusKm: 12,
   },
   {
     name: 'Trần Khôi Nguyên',
@@ -349,7 +349,7 @@ const TUTORS = [
     subjects: ['toan-hoc', 'toan-cap-2', 'luyen-thi-thpt'],
     pricePerHour: 280000,
     location: { city: 'Đà Nẵng', district: 'Hải Châu' },
-    teachesAtStudentHome: true, teachesAtOwnPlace: true, travelRadiusKm: 8,
+    teachesAtStudentHome: true, teachesAtOwnPlace: true, teachesOnline: true, travelRadiusKm: 8,
   },
   {
     name: 'Ngô Bá Khôi',
@@ -423,7 +423,7 @@ const TUTORS = [
     subjects: ['toan-tieu-hoc', 'tieng-viet-tieu-hoc', 'tu-nhien-xa-hoi'],
     pricePerHour: 180000,
     location: { city: 'Cần Thơ', district: 'Bình Thủy' },
-    teachesAtStudentHome: true, teachesAtOwnPlace: true, travelRadiusKm: 5,
+    teachesAtStudentHome: true, teachesAtOwnPlace: true, teachesOnline: true, travelRadiusKm: 5,
   },
 ]
 
@@ -465,6 +465,9 @@ async function main() {
 
   // Clean up in correct order (children before parents)
   await db.session.deleteMany()
+  await db.message.deleteMany()
+  await db.conversation.deleteMany()
+  await db.cancellation.deleteMany()
   await db.availability.deleteMany()
   await db.review.deleteMany()
   await db.booking.deleteMany()
@@ -491,9 +494,11 @@ async function main() {
 
   // Create tutors
   const tutorIds: string[] = []
+  let tutorIdx = 0
   for (const t of TUTORS) {
     const loc = LOCATIONS.find(l => l.city === t.location.city && l.district === t.location.district)!
     const passwordHash = await bcrypt.hash('123456', 10)
+    const idx = tutorIdx++
 
     const tutor = await db.user.create({
       data: {
@@ -507,7 +512,9 @@ async function main() {
         experienceYears: t.experienceYears,
         education: t.education,
         hourlyRate: t.pricePerHour,
-        isVerified: true,
+        // P0-4: chỉ ~1/4 gia sư được verify (thực tế marketplace — còn lại hiển thị
+        // "Chưa xác minh" trung thực, chờ workflow verify thật ở Phase 2)
+        isVerified: idx % 4 === 0,
         address: `Số ${Math.floor(1 + Math.random() * 200)} Đường ${['Nguyễn Phong Sắc', 'Trần Duy Hưng', 'Kim Mã', 'Hào Nam', 'Láng', 'Tây Sơn', 'Huỳnh Thúc Kháng', 'Nguyễn Trãi', 'Lê Lợi', 'Hai Bà Trưng', 'Nguyễn Huệ'][Math.floor(Math.random() * 11)]}`,
         district: t.location.district,
         city: t.location.city,
@@ -515,6 +522,7 @@ async function main() {
         lng: loc.lng + (Math.random() - 0.5) * 0.01,
         teachesAtStudentHome: t.teachesAtStudentHome,
         teachesAtOwnPlace: t.teachesAtOwnPlace,
+        teachesOnline: (t as any).teachesOnline ?? false,
         travelRadiusKm: t.travelRadiusKm,
       }
     })
@@ -625,6 +633,239 @@ async function main() {
     }
   }
   console.log(`✓ Created ${bookingCount} bookings, ${reviewCount} reviews`)
+
+  // P0-1: tạo dữ liệu mẫu cho hệ thống Reliability (một vài booking bị hủy
+  // kèm lý do + mức vi phạm, để demo điểm tin cậy thật trên UI)
+  const cancelled = [
+    { tutorIdx: 1, cancelledBy: 'TUTOR', hoursBefore: 1.5, severity: 'SEVERE', points: 20, reason: 'Gia sư báo ốm đột xuất, không sắp xếp được người thay thế' },
+    { tutorIdx: 1, cancelledBy: 'TUTOR', hoursBefore: 30, severity: 'WARNING', points: 10, reason: 'Trường họp giáo viên đột xuất, xin đổi lịch sang tuần sau' },
+    { tutorIdx: 4, cancelledBy: 'STUDENT', hoursBefore: 20, severity: 'WARNING', points: 10, reason: 'Con bị ốm sốt, phải đưa đi khám bệnh' },
+    { tutorIdx: 7, cancelledBy: 'STUDENT', hoursBefore: 48, severity: 'MINOR', points: 5, reason: 'Gia đình về quê có việc gấp' },
+    { tutorIdx: 9, cancelledBy: 'TUTOR', hoursBefore: 5, severity: 'VIOLATION', points: 15, reason: 'Quên lịch dạy do bận ôn thi' },
+  ] as const
+
+  let cancelCount = 0
+  for (const c of cancelled) {
+    const tutor = TUTORS[c.tutorIdx]
+    const tutorId = tutorIds[c.tutorIdx]
+    const studentId = studentIds[Math.floor(Math.random() * studentIds.length)]
+    const subjectSlug = tutor.subjects[Math.floor(Math.random() * tutor.subjects.length)]
+    const subjectId = subjectMap.get(subjectSlug)!
+    const daysAgo = Math.floor(Math.random() * 60) + 5
+    const date = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000)
+    const dateStr = date.toISOString().split('T')[0]
+    const hour = 18
+
+    const booking = await db.booking.create({
+      data: {
+        studentId,
+        tutorId,
+        subjectId,
+        mode: 'TUTOR_TO_STUDENT',
+        date: dateStr,
+        startTime: `${String(hour).padStart(2, '0')}:00`,
+        endTime: `${String(hour + 1).padStart(2, '0')}:30`,
+        durationHours: 1.5,
+        status: 'CANCELLED',
+        totalAmount: tutor.pricePerHour * 1.5,
+        note: 'Buổi học bị hủy'
+      }
+    })
+
+    await db.cancellation.create({
+      data: {
+        bookingId: booking.id,
+        cancelledBy: c.cancelledBy,
+        reason: c.reason,
+        bookingStatus: 'CONFIRMED',
+        hoursBefore: c.hoursBefore,
+        severity: c.severity,
+        points: c.points,
+      }
+    })
+    cancelCount++
+  }
+  console.log(`✓ Created ${cancelCount} cancellations (reliability demo data)`)
+
+  // ===== Phase 2 (Mục đích 1 & 2) — dữ liệu demo: khóa học định kỳ + hội thoại + thông báo =====
+  const demoTutor = await db.user.findUnique({ where: { email: 'minhanh.tutor@example.com' } })
+  const demoStudent = await db.user.findUnique({ where: { email: 'hoa.parent@example.com' } })
+  const demoStudent2 = await db.user.findUnique({ where: { email: 'minhtam.parent@example.com' } })
+  if (demoTutor && demoStudent && demoStudent2) {
+    const mathId = subjectMap.get('toan-hoc')!
+    const perSession = Math.round(350000 * 1.5) // 1.5h × 350k
+
+    // --- Khóa Toán định kỳ 8 buổi, thứ Tư 18:30–20:00 (2 buổi đã xong, 1 đã xác nhận, 5 chờ) ---
+    const wed = new Date()
+    wed.setHours(0, 0, 0, 0)
+    const diffToWed = (3 - wed.getDay() + 7) % 7 || 7 // thứ Tư SẮP TỚI (luôn ở tương lai)
+    wed.setDate(wed.getDate() + diffToWed)
+    const seriesDates: string[] = []
+    for (let i = -2; i <= 5; i++) {
+      const d = new Date(wed)
+      d.setDate(d.getDate() + i * 7)
+      seriesDates.push(d.toISOString().split('T')[0])
+    }
+    const seriesStatuses = ['COMPLETED', 'COMPLETED', 'CONFIRMED', 'PENDING', 'PENDING', 'PENDING', 'PENDING', 'PENDING']
+    const seriesId = crypto.randomUUID()
+    const seriesBookingIds: string[] = []
+    for (let i = 0; i < seriesDates.length; i++) {
+      const b = await db.booking.create({
+        data: {
+          studentId: demoStudent.id,
+          tutorId: demoTutor.id,
+          subjectId: mathId,
+          mode: 'TUTOR_TO_STUDENT',
+          date: seriesDates[i],
+          startTime: '18:30',
+          endTime: '20:00',
+          durationHours: 1.5,
+          status: seriesStatuses[i],
+          address: 'Số 82 Nguyễn Khang, Yên Hòa, Cầu Giấy',
+          note: i === 0 ? 'Làm quen + đánh giá trình độ của bé' : null,
+          totalAmount: perSession,
+          seriesId,
+          seriesTotal: 8,
+        },
+      })
+      seriesBookingIds.push(b.id)
+    }
+    // Đánh giá 2 buổi đã hoàn thành
+    await db.review.create({
+      data: {
+        tutorId: demoTutor.id, studentId: demoStudent.id, bookingId: seriesBookingIds[0],
+        rating: 5, comment: 'Thầy dạy rất dễ hiểu, bé thích cách truyền đạt của thầy.',
+      },
+    })
+    await db.review.create({
+      data: {
+        tutorId: demoTutor.id, studentId: demoStudent.id, bookingId: seriesBookingIds[1],
+        rating: 4, comment: 'Bé tiến bộ rõ rệt sau 2 buổi, sẽ học dài hạn với thầy.',
+      },
+    })
+
+    // --- Hội thoại 1: Phụ huynh Hoa ↔ Thầy Minh Anh (kèm thông báo hệ thống) ---
+    const conv1 = await db.conversation.create({
+      data: { tutorId: demoTutor.id, studentId: demoStudent.id },
+    })
+    const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000)
+    const vndTotal = (n: number) => `${n.toLocaleString('vi-VN')}đ`
+    await db.message.createMany({
+      data: [
+        {
+          conversationId: conv1.id, senderId: demoStudent.id, kind: 'SYSTEM',
+          body:
+            `[Khóa học định kỳ] Phụ huynh Nguyễn Thị Hoa đã đặt khóa Toán — 8 buổi, mỗi tuần 1 buổi cùng khung giờ 18:30–20:00, ` +
+            `từ ${seriesDates[0]} đến ${seriesDates[7]} (gia sư đến tận nhà).\n` +
+            `Học phí ${vndTotal(perSession)}/buổi · tổng ${vndTotal(perSession * 8)}. Vui lòng xác nhận từng buổi trong Bảng điều khiển.`,
+          createdAt: daysAgo(16), readAt: daysAgo(15.95),
+        },
+        {
+          conversationId: conv1.id, senderId: demoStudent.id, kind: 'TEXT',
+          body: 'Chào thầy, cho tôi hỏi thầy dạy theo SGK mới 2023 rồi chứ ạ? Bé nhà tôi đang học chương Hàm số bậc nhất.',
+          createdAt: daysAgo(15.9), readAt: daysAgo(15.85),
+        },
+        {
+          conversationId: conv1.id, senderId: demoTutor.id, kind: 'TEXT',
+          body: 'Chào mẹ Hoa, em dạy full theo SGK mới ạ. Bé Nhi nắm lý thuyết tốt, tuần này em sẽ luyện thêm các dạng bài nâng cao của chương Hàm số.',
+          createdAt: daysAgo(15.85), readAt: daysAgo(15.8),
+        },
+        {
+          conversationId: conv1.id, senderId: demoTutor.id, kind: 'SYSTEM',
+          body:
+            `[Đã xác nhận] Nguyễn Minh Anh đã xác nhận buổi Toán — ${seriesDates[0]}, 18:30–20:00.\n` +
+            `Học phí ${vndTotal(perSession)} · thanh toán trực tiếp cho gia sư sau buổi học. Chi tiết trong Bảng điều khiển.`,
+          createdAt: daysAgo(15.8), readAt: daysAgo(15.7),
+        },
+        {
+          conversationId: conv1.id, senderId: demoTutor.id, kind: 'SYSTEM',
+          body:
+            `[Hoàn thành] Nguyễn Minh Anh đã đánh dấu buổi Toán ngày ${seriesDates[0]} là đã dạy xong.\n` +
+            'Nếu bạn thấy buổi học tốt, hãy đánh giá trong Bảng điều khiển để giúp các phụ huynh khác tin tưởng chọn gia sư.',
+          createdAt: daysAgo(8.9), readAt: daysAgo(8.8),
+        },
+        {
+          conversationId: conv1.id, senderId: demoStudent.id, kind: 'TEXT',
+          body: 'Thầy ơi, tuần này bé được 9 điểm kiểm tra bài cũ rồi ạ. Cảm ơn thầy nhiều!',
+          createdAt: daysAgo(8.8), readAt: daysAgo(8.7),
+        },
+        {
+          conversationId: conv1.id, senderId: demoTutor.id, kind: 'SYSTEM',
+          body:
+            `[Hoàn thành] Nguyễn Minh Anh đã đánh dấu buổi Toán ngày ${seriesDates[1]} là đã dạy xong.\n` +
+            'Nếu bạn thấy buổi học tốt, hãy đánh giá trong Bảng điều khiển để giúp các phụ huynh khác tin tưởng chọn gia sư.',
+          createdAt: daysAgo(1.9), readAt: null,
+        },
+        {
+          conversationId: conv1.id, senderId: demoStudent.id, kind: 'TEXT',
+          body: 'Thầy ơi tuần sau cô giáo báo bài kiểm tra giữa kỳ, thầy dành 15 phút cuối buổi kèm ôn giúp bé với ạ.',
+          createdAt: daysAgo(1), readAt: null,
+        },
+      ],
+    })
+    await db.conversation.update({
+      where: { id: conv1.id },
+      data: { lastMessageAt: daysAgo(1) },
+    })
+
+    // --- Hội thoại 2: Phụ huynh Minh Tâm ↔ Thầy Minh Anh (hỏi đáp + hủy buổi học thử) ---
+    const cancelThu = new Date()
+    cancelThu.setHours(0, 0, 0, 0)
+    const diffToThu = (4 - cancelThu.getDay() + 7) % 7 || 4
+    cancelThu.setDate(cancelThu.getDate() + diffToThu)
+    const cancelDateStr = cancelThu.toISOString().split('T')[0]
+    const trialBooking = await db.booking.create({
+      data: {
+        studentId: demoStudent2.id, tutorId: demoTutor.id, subjectId: mathId,
+        mode: 'TUTOR_TO_STUDENT', date: cancelDateStr, startTime: '18:00', endTime: '19:30',
+        durationHours: 1.5, status: 'CANCELLED', totalAmount: perSession,
+        note: 'Buổi học thử', address: 'Cầu Giấy, Hà Nội',
+      },
+    })
+    await db.cancellation.create({
+      data: {
+        bookingId: trialBooking.id, cancelledBy: 'STUDENT',
+        reason: 'Bé ốm sốt, gia đình muốn hoãn buổi học thử sang tuần sau',
+        bookingStatus: 'PENDING', hoursBefore: 96, severity: 'MINOR', points: 5,
+      },
+    })
+    const conv2 = await db.conversation.create({
+      data: { tutorId: demoTutor.id, studentId: demoStudent2.id },
+    })
+    await db.message.createMany({
+      data: [
+        {
+          conversationId: conv2.id, senderId: demoStudent2.id, kind: 'TEXT',
+          body: 'Chào thầy, thầy có nhận dạy Toán kèm tại nhà cho bé lớp 6 ở Cầu Giấy không ạ?',
+          createdAt: daysAgo(2), readAt: daysAgo(1.95),
+        },
+        {
+          conversationId: conv2.id, senderId: demoTutor.id, kind: 'TEXT',
+          body: 'Dạ em nhận ạ. Mẹ cho em biết lịch cố định của bé để em kiểm tra lịch trống nhé ạ.',
+          createdAt: daysAgo(1.95), readAt: daysAgo(1.9),
+        },
+        {
+          conversationId: conv2.id, senderId: demoStudent2.id, kind: 'SYSTEM',
+          body:
+            `[Lớp học mới] ${demoStudent2.name} đã đặt lịch Toán — ${cancelDateStr}, 18:00–19:30 (gia sư đến tận nhà).\n` +
+            `Học phí ${vndTotal(perSession)} · thanh toán trực tiếp sau buổi học. Vui lòng xác nhận trong Bảng điều khiển.`,
+          createdAt: daysAgo(1.8), readAt: daysAgo(1.75),
+        },
+        {
+          conversationId: conv2.id, senderId: demoStudent2.id, kind: 'SYSTEM',
+          body:
+            `[Đã hủy] Buổi Toán — ${cancelDateStr}, 18:00 đã bị hủy bởi ${demoStudent2.name}.\n` +
+            'Lý do: Bé ốm sốt, gia đình muốn hoãn buổi học thử sang tuần sau. Việc hủy này ảnh hưởng độ tin cậy của người hủy (-5 điểm).',
+          createdAt: daysAgo(1), readAt: null,
+        },
+      ],
+    })
+    await db.conversation.update({
+      where: { id: conv2.id },
+      data: { lastMessageAt: daysAgo(1) },
+    })
+    console.log('✓ Created demo series (8 buổi Toán) + 2 conversations with system notifications')
+  }
 
   console.log('\n✅ Seed completed!')
   console.log('Demo accounts (password: 123456):')

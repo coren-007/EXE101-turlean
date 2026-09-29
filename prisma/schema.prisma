@@ -8,6 +8,8 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
+  // Supabase: DATABASE_URL = pooled (pgbouncer, port 6543) cho app runtime
+  //           DIRECT_URL    = direct  (port 5432) cho prisma db push / migrate
   directUrl = env("DIRECT_URL")
 }
 
@@ -46,6 +48,9 @@ model User {
   reviewsReceived Review[]      @relation("ReviewTarget")
   availabilities  Availability[]
   sessions        Session[]
+  conversationsAsTutor   Conversation[] @relation("TutorConversations")
+  conversationsAsStudent Conversation[] @relation("StudentConversations")
+  messagesSent    Message[]    @relation("MessageSender")
 }
 
 model Subject {
@@ -79,18 +84,41 @@ model Booking {
   date         String   // YYYY-MM-DD
   startTime    String   // HH:MM
   endTime      String   // HH:MM
-  durationHours Int     @default(1)
+  durationHours Float    @default(1) // P0-5: Float thay vì Int — giữ đúng 1.5h/2.5h (Int làm mất nửa giờ)
   status       String   @default("PENDING") // PENDING | CONFIRMED | COMPLETED | CANCELLED
   address      String?
   lat          Float?
   lng          Float?
   note         String?
   totalAmount  Int
+  // Lớp học định kỳ (Mục đích 1 — quản lý lớp học): các buổi cùng khóa
+  // chia sẻ seriesId; seriesTotal ghi tổng số buổi của khóa.
+  // Buổi lẻ (không định kỳ) thì seriesId = null.
+  seriesId     String?
+  seriesTotal  Int?
   createdAt    DateTime @default(now())
   student      User     @relation("StudentBookings", fields: [studentId], references: [id])
   tutor        User     @relation("TutorBookings", fields: [tutorId], references: [id])
   subject      Subject  @relation(fields: [subjectId], references: [id])
   review       Review?
+  cancellation Cancellation?
+
+  @@index([seriesId])
+}
+
+// Reliability system — mọi lần hủy lịch đều được ghi lại kèm mức độ vi phạm
+model Cancellation {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  cancelledBy String   // TUTOR | STUDENT — ai là người hủy
+  reason      String   // lý do hủy, bắt buộc >= 5 ký tự
+  bookingStatus String // PENDING | CONFIRMED — trạng thái lúc hủy
+  hoursBefore Float    // khoảng cách từ lúc hủy đến giờ bắt đầu buổi học
+  severity    String   // NONE | MINOR | WARNING | VIOLATION | SEVERE
+  points      Int      // số điểm reliability bị trừ
+  createdAt   DateTime @default(now())
+
+  booking     Booking  @relation(fields: [bookingId], references: [id])
 }
 
 model Review {
@@ -113,6 +141,39 @@ model Availability {
   startTime  String  // HH:MM
   endTime    String  // HH:MM
   tutor      User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+}
+
+// Mục đích 2 — kết nối 2 bên: hội thoại 1-1 giữa gia sư và phụ huynh/học sinh.
+// Một cặp (tutor, student) chỉ có đúng một hội thoại.
+model Conversation {
+  id           String   @id @default(cuid())
+  tutorId      String
+  studentId    String
+  createdAt    DateTime @default(now())
+  lastMessageAt DateTime @default(now())
+  tutor        User     @relation("TutorConversations", fields: [tutorId], references: [id])
+  student      User     @relation("StudentConversations", fields: [studentId], references: [id])
+  messages     Message[]
+
+  @@unique([tutorId, studentId])
+  @@index([tutorId, lastMessageAt])
+  @@index([studentId, lastMessageAt])
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String
+  // TEXT: tin nhắn thật giữa 2 bên · SYSTEM: thông báo tự động về sự kiện booking
+  // (đặt lịch, xác nhận, hoàn thành, hủy) — hiển thị dạng thẻ thông báo, không phải bong bóng chat
+  kind           String    @default("TEXT")
+  readAt         DateTime? // null = chưa đọc bởi người nhận
+  createdAt      DateTime  @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([conversationId, createdAt])
 }
 
 model Session {

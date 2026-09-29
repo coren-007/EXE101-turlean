@@ -10,14 +10,18 @@ FROM oven/bun:1 AS deps
 WORKDIR /app
 
 # Copy package files
-COPY package.json bun.lock* ./
+COPY package.json bun.lock ./
 COPY prisma ./prisma/
 
 # Install ALL dependencies (cần devDependencies cho build)
 RUN bun install --frozen-lockfile
 
+# Dummy PostgreSQL URL — prisma generate không kết nối thật,
+# schema provider = postgresql yêu cầu biến này tồn tại
+ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+ENV DIRECT_URL=postgresql://postgres:postgres@localhost:5432/postgres
+
 # Generate Prisma client
-ENV DATABASE_URL=file:./db/build.db
 RUN bun run db:generate
 
 # --- Stage 2: Build ---
@@ -28,10 +32,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV DATABASE_URL=file:./db/build.db
+ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+ENV DIRECT_URL=postgresql://postgres:postgres@localhost:5432/postgres
 
 # Build Next.js (standalone output)
-RUN bun run db:generate
 RUN bun run build
 
 # --- Stage 3: Production ---
@@ -51,13 +55,12 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma files for runtime
-COPY --from=builder /app/prisma ./prisma
+# Copy Prisma client cho runtime
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
-# Create db directory for SQLite (if using SQLite)
-RUN mkdir -p /app/db
+# DATABASE_URL + DIRECT_URL (PostgreSQL thật, vd Supabase) được truyền qua
+# `docker run -e` hoặc docker-compose environment
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

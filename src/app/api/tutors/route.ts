@@ -1,6 +1,19 @@
+// GET /api/tutors — tìm kiếm gia sư
+// P1: search case-insensitive (tương thích SQLite & PostgreSQL)
+// P1: phân trang (page/pageSize) + trả total
+// P1: kèm reliability score cho mỗi gia sư (bulk, tránh N+1)
+// P1: tutor chưa có review không bị dồn xuống đáy (điểm khởi đầu 4.5 tạm)
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
+import { computeReliabilityBulk } from '@/lib/reliability'
+
+// SQLite: contains đã case-insensitive; PostgreSQL: cần mode insensitive
+const IS_POSTGRES = (process.env.DATABASE_URL ?? '').startsWith('postgres')
+
+function ci(field: string, q: string): Prisma.StringFilter {
+  return IS_POSTGRES ? { contains: q, mode: 'insensitive' } as Prisma.StringFilter : { contains: q } as Prisma.StringFilter
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -13,11 +26,13 @@ export async function GET(req: NextRequest) {
   const minPrice = searchParams.get('minPrice')
   const maxPrice = searchParams.get('maxPrice')
   const minRating = searchParams.get('minRating')
-  const mode = searchParams.get('mode') // TUTOR_TO_STUDENT | STUDENT_TO_TUTOR
+  const mode = searchParams.get('mode') // TUTOR_TO_STUDENT | STUDENT_TO_TUTOR | ONLINE
   const userLat = searchParams.get('lat')
   const userLng = searchParams.get('lng')
   const radiusKm = searchParams.get('radius')
-  const sort = searchParams.get('sort') || 'rating' // rating | price_asc | price_desc | distance
+  const sort = searchParams.get('sort') || 'rating' // rating | price_asc | price_desc | distance | newest
+  const page = Math.max(1, Number(searchParams.get('page') ?? 1) || 1)
+  const pageSize = Math.min(50, Math.max(1, Number(searchParams.get('pageSize') ?? 20) || 20))
 
   // Build subject filter (only when filtering by subject/category/level)
   const subjectFilter: any = {}
@@ -27,23 +42,19 @@ export async function GET(req: NextRequest) {
 
   const where: Prisma.UserWhereInput = {
     role: 'TUTOR',
-    // Only show tutors who have at least 1 subject and hourly rate set
     hourlyRate: { gt: 0 },
-    // Subject filter (AND): tutor must have at least 1 subject matching all subject criteria
     tutorSubjects: { some: { subject: subjectFilter } },
   }
 
-  // Text search (q): search across tutor name, profession, bio, AND subject name (OR)
-  // Combined with subject filter using AND (both must match)
+  // Text search (q): theo tên gia sư, nghề nghiệp, bio, tên môn học — không phân biệt hoa thường
   if (q) {
     where.AND = [
       {
         OR: [
-          { name: { contains: q } },
-          { profession: { contains: q } },
-          { bio: { contains: q } },
-          // Also search in subjects the tutor teaches (by name)
-          { tutorSubjects: { some: { subject: { name: { contains: q } } } } },
+          { name: ci('name', q) },
+          { profession: ci('profession', q) },
+          { bio: ci('bio', q) },
+          { tutorSubjects: { some: { subject: { name: ci('name', q) } } } },
         ],
       },
     ]
@@ -56,9 +67,12 @@ export async function GET(req: NextRequest) {
     where.teachesAtStudentHome = true
   } else if (mode === 'STUDENT_TO_TUTOR') {
     where.teachesAtOwnPlace = true
+  } else if (mode === 'ONLINE') {
+    // P1: filter gia sư dạy trực tuyến
+    where.teachesOnline = true
   }
 
-  let tutors = await db.user.findMany({
+  const tutors = await db.user.findMany({
     where,
     include: {
       tutorSubjects: { include: { subject: true } },
@@ -101,6 +115,7 @@ export async function GET(req: NextRequest) {
       })),
       avgRating: Math.round(avgRating * 10) / 10,
       reviewCount: reviews.length,
+      createdAt: t.createdAt,
     }
   })
 
@@ -126,7 +141,6 @@ export async function GET(req: NextRequest) {
     if (radiusKm) {
       result = (result as any[]).filter(t => t.distanceKm !== null && t.distanceKm <= Number(radiusKm))
     }
-    // Also filter tutors who can travel to user if mode is TUTOR_TO_STUDENT
     if (mode === 'TUTOR_TO_STUDENT') {
       result = (result as any[]).filter(t => t.travelRadiusKm === null || t.travelRadiusKm === 0 || (t.distanceKm !== null && t.distanceKm <= t.travelRadiusKm))
     }
@@ -134,7 +148,7 @@ export async function GET(req: NextRequest) {
     result = (result as any[]).map(t => ({ ...t, distanceKm: null }))
   }
 
-  // Sort
+  // Sort — P1: 'newest' cho tutor mới; rating sort không dồn tutor 0-review xuống đáy
   const sortResult = result as any[]
   if (sort === 'price_asc') {
     sortResult.sort((a, b) => a.minPrice - b.minPrice)
@@ -142,10 +156,37 @@ export async function GET(req: NextRequest) {
     sortResult.sort((a, b) => b.minPrice - a.minPrice)
   } else if (sort === 'distance' && userLat) {
     sortResult.sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
+  } else if (sort === 'newest') {
+    sortResult.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   } else {
-    // rating
-    sortResult.sort((a, b) => b.avgRating - a.avgRating || b.reviewCount - a.reviewCount)
+    // rating: tutor có >=3 review xếp theo điểm thật;
+    // tutor ít/0 review dùng điểm khởi đầu 4.5 — không bị dồn xuống đáy (cold-start)
+    const effective = (t: any) => (t.reviewCount >= 3 ? t.avgRating : 4.5)
+    sortResult.sort((a, b) => effective(b) - effective(a) || b.reviewCount - a.reviewCount)
   }
 
-  return NextResponse.json({ tutors: result, total: result.length })
+  const total = sortResult.length
+
+  // P1: phân trang
+  const paged = sortResult.slice((page - 1) * pageSize, page * pageSize)
+
+  // P1: reliability bulk cho các tutor trong trang hiện tại
+  const reliabilityMap = await computeReliabilityBulk(paged.map(t => t.id))
+  const withReliability = paged.map(t => {
+    const rel = reliabilityMap.get(t.id)
+    return {
+      ...t,
+      reliability: rel
+        ? { score: rel.score, tier: rel.tier.key, tierLabel: rel.tier.label, violations: rel.violations }
+        : { score: 100, tier: 'EXCELLENT', tierLabel: 'Xuất sắc', violations: 0 },
+    }
+  })
+
+  return NextResponse.json({
+    tutors: withReliability,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  })
 }

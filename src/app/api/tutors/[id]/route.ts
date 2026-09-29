@@ -1,11 +1,19 @@
+// GET /api/tutors/[id] — hồ sơ công khai của gia sư
+// P0-3: KHÔNG trả email/phone ra public. SĐT chỉ trả khi người xem
+// là học sinh có booking CONFIRMED/COMPLETED với gia sư này.
+// P0-2: avgRating tính từ TOÀN BỘ review (trước đây chỉ lấy 20 review mới nhất).
+// P0-1: kèm reliability score công khai.
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
+import { computeReliability } from '@/lib/reliability'
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
+
   const tutor = await db.user.findFirst({
     where: { id, role: 'TUTOR' },
     include: {
@@ -13,7 +21,7 @@ export async function GET(
       reviewsReceived: {
         include: { student: { select: { name: true, avatar: true } } },
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        take: 20, // chỉ dùng cho hiển thị danh sách — avgRating tính riêng bên dưới
       },
       availabilities: { orderBy: { dayOfWeek: 'asc' } },
     },
@@ -23,13 +31,37 @@ export async function GET(
     return NextResponse.json({ error: 'Không tìm thấy gia sư' }, { status: 404 })
   }
 
-  const reviews = tutor.reviewsReceived
-  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0
+  // P0-2: điểm đánh giá trung bình từ TẤT CẢ review (aggregate riêng)
+  const reviewAgg = await db.review.aggregate({
+    where: { tutorId: id },
+    _avg: { rating: true },
+    _count: { _all: true },
+  })
+  const avgRating = reviewAgg._avg.rating ?? 0
+  const reviewCount = reviewAgg._count._all
+
+  // P0-1: reliability score
+  const reliability = await computeReliability(id)
+
+  // P0-3: chỉ cấp SĐT cho học sinh có booking đang hoạt động với gia sư này
+  const viewer = await getCurrentUser()
+  let phone: string | null = null
+  if (viewer && viewer.role === 'STUDENT' && viewer.id !== id) {
+    const activeBooking = await db.booking.findFirst({
+      where: {
+        studentId: viewer.id,
+        tutorId: id,
+        status: { in: ['PENDING', 'CONFIRMED', 'COMPLETED'] },
+      },
+      select: { id: true },
+    })
+    if (activeBooking) phone = tutor.phone
+  }
 
   return NextResponse.json({
     id: tutor.id,
     name: tutor.name,
-    email: tutor.email,
+    // P0-3: email đã bị loại khỏi response public
     avatar: tutor.avatar,
     bio: tutor.bio,
     profession: tutor.profession,
@@ -37,7 +69,7 @@ export async function GET(
     education: tutor.education,
     hourlyRate: tutor.hourlyRate,
     isVerified: tutor.isVerified,
-    phone: tutor.phone,
+    phone, // null nếu chưa có booking hoạt động
     district: tutor.district,
     city: tutor.city,
     address: tutor.address,
@@ -58,8 +90,9 @@ export async function GET(
     })),
     availabilities: tutor.availabilities,
     avgRating: Math.round(avgRating * 10) / 10,
-    reviewCount: reviews.length,
-    reviews: reviews.map(r => ({
+    reviewCount,
+    reliability,
+    reviews: tutor.reviewsReceived.map(r => ({
       id: r.id,
       rating: r.rating,
       comment: r.comment,

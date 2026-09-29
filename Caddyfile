@@ -1,23 +1,21 @@
-:81 {
-	@transform_port_query {
-		query XTransformPort=*
-	}
+# ============================================
+# Caddyfile — GiaSuConnect (Turlean)
+# Reverse proxy cho VPS deploy (không cần cho Vercel)
+# Cài Caddy: https://caddyserver.com/docs/install
+# Chạy: caddy run --config Caddyfile
+# ============================================
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
-	}
-
-	handle {
-		reverse_proxy localhost:3000 {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
+# Thay giasuconnect.vn bằng domain thật (Caddy tự động HTTPS qua Let's Encrypt)
+giasuconnect.vn {
+	reverse_proxy localhost:3000 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
 	}
 }
+
+# Khi chưa có domain — chạy local HTTP:
+# :80 {
+# 	reverse_proxy localhost:3000
+# }

@@ -11,8 +11,7 @@ import { AuthPage } from '@/components/pages/auth-page'
 import { DashboardPage } from '@/components/pages/dashboard-page'
 import { ProfileEditPage } from '@/components/pages/profile-edit-page'
 import { OnboardingPage } from '@/components/pages/onboarding-page'
-import { ManageSubjectsPage } from '@/components/pages/manage-subjects-page'
-import { ManageAvailabilityPage } from '@/components/pages/manage-availability-page'
+import { MessagesPage } from '@/components/pages/messages-page'
 
 export default function Home() {
   const { view, user, setUser, navigate } = useApp()
@@ -47,8 +46,10 @@ export default function Home() {
       case 'dashboard': return <DashboardPage />
       case 'profile-edit': return <ProfileEditPage />
       case 'onboarding': return <OnboardingPage />
-      case 'manage-subjects': return <ManageSubjectsPage />
-      case 'manage-availability': return <ManageAvailabilityPage />
+      // View cũ (tương thích URL) — dashboard tự chuyển hướng vào tab tương ứng
+      case 'manage-subjects': return <DashboardPage />
+      case 'manage-availability': return <DashboardPage />
+      case 'messages': return <MessagesPage initialConversationId={view.conversationId} />
       case 'my-profile': return user ? <TutorProfilePage id={user.id} /> : <HomePage />
       default: return <HomePage />
     }

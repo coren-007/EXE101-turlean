@@ -1,8 +1,7 @@
 # 🚀 Hướng dẫn CI/CD & Deployment — GiaSuConnect (Turlean)
 
-> **Người phụ trách**: 
 > **Chi phí**: 0₫ (100% FREE tier)
-> **Cập nhật**: 2026-06-25
+> **Cập nhật**: 2026-09-29
 
 ---
 
@@ -51,9 +50,9 @@ File `.github/workflows/ci.yml` đã tạo. Tự động chạy khi:
 - Push lên `main` hoặc `staging`
 - Tạo Pull Request lên `main` hoặc `staging`
 
-### CI làm gì:
-1. **Lint job**: Install → Generate Prisma → ESLint check
-2. **Build job**: Install → Generate Prisma → Build Next.js
+### CI làm gì (Bun):
+1. **Lint job**: `bun install --frozen-lockfile` → Generate Prisma → ESLint → Type Check
+2. **Build job**: `bun install --frozen-lockfile` → Generate Prisma → Build Next.js (standalone)
 
 ### Kiểm tra CI chạy:
 ```bash
@@ -71,17 +70,23 @@ git push origin main
 
 ### 3.1 Tạo tài khoản Vercel
 1. Vào https://vercel.com → Sign up với GitHub account
-2. Import project: chọn repo `EXE101-turlearn`
+2. Import project: chọn repo `EXE101-turlean`
 3. Framework preset: **Next.js** (tự động detect)
+4. Build & install command đã cấu hình sẵn trong `vercel.json` (Bun)
 
 ### 3.2 Cấu hình Environment Variables
 Trong Vercel dashboard → Settings → Environment Variables:
 
 ```
-DATABASE_URL=postgresql://postgres:[PASSWORD]@db.[PROJECT_REF].supabase.co:5432/postgres
+DATABASE_URL=postgresql://postgres.[PROJECT_REF]:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true
+DIRECT_URL=postgresql://postgres:[PASSWORD]@db.[PROJECT_REF].supabase.co:5432/postgres
 NEXT_PUBLIC_APP_NAME=GiaSuConnect
 NEXT_PUBLIC_APP_URL=https://your-app.vercel.app
 ```
+
+- `DATABASE_URL`: connection **pooled** (pgbouncer, port 6543) — cho app runtime
+- `DIRECT_URL`: connection **direct** (port 5432) — cho Prisma CLI
+- (tùy chọn) `CRON_SECRET` — bảo vệ endpoint cron reminder
 
 ### 3.3 Deploy
 - Vercel tự động deploy khi push lên `main`
@@ -107,22 +112,20 @@ Vercel (serverless) không hỗ trợ SQLite persistent storage → cần Postgr
 
 ### 4.2 Lấy connection string
 - Settings → Database → Connection string → URI
-- Format: `postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres`
-- Copy vào Vercel Environment Variables: `DATABASE_URL`
+- **Pooled** (port 6543, thêm `?pgbouncer=true`): dùng cho `DATABASE_URL`
+- **Direct** (port 5432): dùng cho `DIRECT_URL`
 
-### 4.3 Migrate schema
+### 4.3 Push schema + seed
 ```bash
-# Cài Prisma globally (nếu chưa)
-npm install -g prisma
-
-# Set DATABASE_URL tạm thời
-export DATABASE_URL="postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
+# Từ máy local, trỏ vào Supabase
+export DATABASE_URL="postgresql://postgres.[REF]:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
+export DIRECT_URL="postgresql://postgres:[PASSWORD]@db.[REF].supabase.co:5432/postgres"
 
 # Push schema lên Supabase
 bun run db:push
 
 # Seed dữ liệu
-bun run scripts/seed.ts
+bun run seed
 ```
 
 ### 4.4 Giới hạn FREE tier
@@ -135,19 +138,26 @@ bun run scripts/seed.ts
 
 ## 🐳 Bước 5: Docker (tùy chọn — cho VPS)
 
-### Chạy local với Docker:
+Stack đã gồm **app + PostgreSQL 16** (xem `docker-compose.yml`):
+
 ```bash
-# Build + run
-docker-compose up -d
+# Build + chạy full stack (db khởi động trước, app đợi db healthy)
+docker compose up -d
+
+# Lần đầu — tạo schema + seed (từ host, khi db đã sẵn sàng)
+DATABASE_URL=postgresql://giasuconnect:giasuconnect@localhost:5432/giasuconnect \
+DIRECT_URL=postgresql://giasuconnect:giasuconnect@localhost:5432/giasuconnect \
+  bun run db:push && \
+DATABASE_URL=postgresql://giasuconnect:giasuconnect@localhost:5432/giasuconnect \
+DIRECT_URL=postgresql://giasuconnect:giasuconnect@localhost:5432/giasuconnect \
+  bun run seed
 
 # Xem logs
-docker-compose logs -f
+docker compose logs -f
 
-# Stop
-docker-compose down
-
-# Rebuild sau khi thay đổi code
-docker-compose up -d --build
+# Stop / rebuild
+docker compose down
+docker compose up -d --build
 ```
 
 ### Deploy lên VPS (sau — nếu cần):
@@ -285,8 +295,9 @@ bun run db:generate
 
 ### Vercel deploy fail: DB connection
 ```bash
-# Kiểm tra DATABASE_URL trong Vercel env vars
+# Kiểm tra DATABASE_URL + DIRECT_URL trong Vercel env vars
 # Phải dùng PostgreSQL (Supabase), KHÔNG dùng SQLite
+# DATABASE_URL = pooled (port 6543) · DIRECT_URL = direct (port 5432)
 ```
 
 ### Supabase paused (7 ngày không hoạt động)
