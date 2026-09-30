@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "bun run db:generate && bun run build",
+  "buildCommand": "bunx prisma migrate resolve --applied 20260930100000_baseline_existing_supabase && bunx prisma migrate resolve --applied 20260930101000_sync_schema_and_lock_api && bun run db:generate && bun run build",
   "installCommand": "bun install",
   "devCommand": "bun run dev",
   "crons": [
@@ -14,9 +14,18 @@
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "X-XSS-Protection", "value": "1; mode=block" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        }
       ]
     }
   ]
