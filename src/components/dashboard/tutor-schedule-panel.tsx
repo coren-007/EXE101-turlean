@@ -12,7 +12,6 @@ import {
 } from '@/components/ui/dialog'
 import {
   Plus, Calendar, Clock, Trash2, CheckCircle2, CalendarCheck, MousePointerClick,
-  Lock, Info
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -22,26 +21,17 @@ const DAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 const TIME_PRESETS = ['06:00', '08:00', '10:00', '14:00', '16:00', '18:00', '20:00']
 
-type SlotKind = 'FREE' | 'FIXED'
-
 interface Slot {
   id: string
   dayOfWeek: number
   startTime: string
   endTime: string
-  kind?: string
 }
 
-const isFixed = (s: Slot) => s.kind === 'FIXED'
-
 /**
- * Panel "Lịch dạy hàng tuần" trong Trang quản lý gia sư.
- * Hai chế độ:
- *  - FREE: giờ trống — học sinh đặt được lịch trong các khung này
- *  - FIXED: giờ bận — lớp gia sư đang dạy NGOÀI nền tảng (trường, trung tâm,
- *    học sinh cũ) → hồ sơ hiện "Giờ bận", không nhận thêm lớp 1-1.
- *    (Lớp nhóm mở ngay trên nền tảng xin dùng tab "Lớp học cố định".)
+ * Panel "Lịch dạy hàng tuần" trong Tutor Studio — lưới giờ trống nhận lớp 1-1.
  * Bấm ô lưới để bật/tắt slot 2 tiếng, hoặc thêm slot tùy chỉnh bằng dialog.
+ * Lớp nhóm theo lịch tuần cố định xin dùng tab "Lớp học" (mục Lớp học cố định).
  */
 export function TutorSchedulePanel() {
   const { user, navigate } = useApp()
@@ -49,13 +39,10 @@ export function TutorSchedulePanel() {
   const [loading, setLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  // Chế độ đang chỉnh: 'FREE' (giờ trống) hay 'FIXED' (lịch dạy cố định)
-  const [mode, setMode] = useState<SlotKind>('FREE')
 
   const [day, setDay] = useState(1)
   const [startTime, setStartTime] = useState('18:00')
   const [endTime, setEndTime] = useState('20:00')
-  const [customKind, setCustomKind] = useState<SlotKind>('FREE')
 
   const load = async () => {
     const data = await fetch('/api/tutors/me/availability').then(r => r.json())
@@ -67,25 +54,16 @@ export function TutorSchedulePanel() {
     if (user?.role === 'TUTOR') load()
   }, [user])
 
-  // Bấm ô lưới ở chế độ hiện tại:
-  //  - slot cùng loại tồn tại (FREE: khớp giờ bắt đầu / FIXED: chồng lấn) → xóa
-  //  - chưa có → thêm slot 2 tiếng của loại đang chọn
+  // Bấm ô lưới: có slot khớp giờ bắt đầu → xóa, chưa có → thêm slot 2 tiếng
   const toggleCell = async (dayOfWeek: number, startTime: string) => {
-    // FREE: logic cũ — khớp chính xác giờ bắt đầu
-    const existingFree = slots.find(
-      s => !isFixed(s) && s.dayOfWeek === dayOfWeek && s.startTime === startTime,
+    const existing = slots.find(
+      s => s.dayOfWeek === dayOfWeek && s.startTime === startTime,
     )
-    // FIXED: khung cố định thường lệchpreset (vd 07:30–11:30) → xét chồng lấn
-    const existingFixed = slots.find(
-      s => isFixed(s) && s.dayOfWeek === dayOfWeek &&
-        s.startTime <= startTime && s.endTime > startTime,
-    )
-    const target = mode === 'FREE' ? existingFree : existingFixed
     try {
-      if (target) {
-        const res = await fetch(`/api/tutors/me/availability/${target.id}`, { method: 'DELETE' })
+      if (existing) {
+        const res = await fetch(`/api/tutors/me/availability/${existing.id}`, { method: 'DELETE' })
         if (!res.ok) throw new Error()
-        setSlots(prev => prev.filter(s => s.id !== target.id))
+        setSlots(prev => prev.filter(s => s.id !== existing.id))
       } else {
         const startH = parseInt(startTime.split(':')[0])
         const endH = Math.min(startH + 2, 23)
@@ -93,7 +71,6 @@ export function TutorSchedulePanel() {
           dayOfWeek,
           startTime,
           endTime: `${String(endH).padStart(2, '0')}:00`,
-          kind: mode,
         }
         const res = await fetch('/api/tutors/me/availability', {
           method: 'POST',
@@ -121,15 +98,11 @@ export function TutorSchedulePanel() {
       const res = await fetch('/api/tutors/me/availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dayOfWeek: day, startTime, endTime, kind: customKind }),
+        body: JSON.stringify({ dayOfWeek: day, startTime, endTime }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      toast.success(
-        customKind === 'FIXED'
-          ? `Đã thêm giờ bận ${DAY_NAMES[day]} ${startTime}–${endTime}`
-          : `Đã thêm giờ trống ${DAY_NAMES[day]} ${startTime}–${endTime}`,
-      )
+      toast.success(`Đã thêm giờ trống ${DAY_NAMES[day]} ${startTime}–${endTime}`)
       setAddOpen(false)
       // API trả về object slot trực tiếp (không bọc trong { availability })
       setSlots(prev => [...prev, data])
@@ -144,9 +117,7 @@ export function TutorSchedulePanel() {
     try {
       await fetch(`/api/tutors/me/availability/${slot.id}`, { method: 'DELETE' })
       setSlots(prev => prev.filter(s => s.id !== slot.id))
-      toast.success(
-        `Đã xóa ${isFixed(slot) ? 'giờ bận' : 'giờ trống'} ${DAY_NAMES[slot.dayOfWeek]} ${slot.startTime}–${slot.endTime}`,
-      )
+      toast.success(`Đã xóa giờ trống ${DAY_NAMES[slot.dayOfWeek]} ${slot.startTime}–${slot.endTime}`)
     } catch {
       toast.error('Xóa thất bại')
     }
@@ -158,9 +129,6 @@ export function TutorSchedulePanel() {
     if (!byDay[s.dayOfWeek]) byDay[s.dayOfWeek] = []
     byDay[s.dayOfWeek].push(s)
   })
-
-  const freeCount = slots.filter(s => !isFixed(s)).length
-  const fixedCount = slots.length - freeCount
 
   if (loading) {
     return <Card className="p-10 text-center text-sm text-muted-foreground">Đang tải lịch dạy...</Card>
@@ -174,50 +142,19 @@ export function TutorSchedulePanel() {
             <CalendarCheck className="h-5 w-5 text-primary" /> Lịch dạy hàng tuần
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Đánh dấu giờ trống để nhận lớp mới, hoặc giờ bận (lớp ngoài nền tảng) bạn đang có.
+            Đánh dấu giờ trống để nhận lớp 1-1 mới — phụ huynh chỉ đặt được trong các khung này.
           </p>
         </div>
         <Button
           variant="outline"
           className="rounded-full font-semibold"
-          onClick={() => {
-            setCustomKind(mode)
-            setAddOpen(true)
-          }}
+          onClick={() => setAddOpen(true)}
         >
           <Plus className="h-4 w-4 mr-1" /> Khung giờ tùy chỉnh
         </Button>
       </div>
 
-      {/* Chuyển chế độ: Giờ trống / Lịch dạy cố định */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="inline-flex rounded-full bg-muted p-1 gap-1">
-          <button
-            onClick={() => setMode('FREE')}
-            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
-              mode === 'FREE' ? 'bg-primary text-primary-foreground shadow-e1' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Giờ trống · {freeCount}
-          </button>
-          <button
-            onClick={() => setMode('FIXED')}
-            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all ${
-              mode === 'FIXED' ? 'bg-amber-500 text-white shadow-e1' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Giờ bận (lớp ngoài) · {fixedCount}
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          {mode === 'FREE'
-            ? 'Học sinh chỉ có thể đặt lịch trong các khung giờ này.'
-            : 'Các khung này hiện trên hồ sơ là "Giờ bận" — học sinh không đặt được lịch 1-1 vào các khung này.'}
-        </p>
-      </div>
-
-      {/* Lưới lịch tuần — bấm để bật/tắt theo chế độ đang chọn */}
+      {/* Lưới lịch tuần — bấm để bật/tắt giờ trống */}
       <Card className="p-4 md:p-5 rounded-2xl">
         <div className="overflow-x-auto scroll-area">
           <div className="min-w-[640px]">
@@ -235,47 +172,25 @@ export function TutorSchedulePanel() {
                   {t}
                 </div>
                 {DAY_ORDER.map(dayIdx => {
-                  // Ô giờ trống (FREE) — khớp giờ bắt đầu như logic cũ
-                  const freeActive = slots.some(
-                    s => !isFixed(s) && s.dayOfWeek === dayIdx && s.startTime === t,
+                  const active = slots.some(
+                    s => s.dayOfWeek === dayIdx && s.startTime === t,
                   )
-                  // Ô lịch cố định (FIXED) — chồng lấn khung preset
-                  const fixedOverlap = slots.some(
-                    s => isFixed(s) && s.dayOfWeek === dayIdx &&
-                      s.startTime <= t && s.endTime > t,
-                  )
-                  // Ở chế độ nào thì ô loại kia chỉ hiển thị (không chỉnh được)
-                  const isOtherKind =
-                    (mode === 'FREE' && fixedOverlap) || (mode === 'FIXED' && freeActive)
-
-                  let cls = 'bg-muted/70 hover:bg-primary/10 text-muted-foreground'
-                  let content: React.ReactNode = '+'
-                  let title = `Bấm để thêm ${DAY_NAMES[dayIdx]} ${t}`
-                  if (fixedOverlap) {
-                    cls = 'bg-amber-100 text-amber-700 border border-amber-300'
-                    content = <Lock className="h-4 w-4 mx-auto" />
-                    title = `Giờ bận ${DAY_NAMES[dayIdx]} ${t} (lớp ngoài nền tảng)`
-                  }
-                  if (freeActive) {
-                    cls = 'bg-primary text-primary-foreground shadow-e1 hover:bg-primary/90'
-                    content = <CheckCircle2 className="h-4 w-4 mx-auto" />
-                    title = `Giờ trống ${DAY_NAMES[dayIdx]} ${t} — bấm để xóa`
-                  }
-
                   return (
                     <button
                       key={dayIdx}
-                      onClick={() => (isOtherKind ? toast.info(
-                        mode === 'FREE'
-                          ? 'Đây là giờ bận (lớp ngoài nền tảng) — chuyển sang tab "Giờ bận" để chỉnh'
-                          : 'Đây là giờ trống — chuyển sang tab "Giờ trống" để chỉnh',
-                      ) : toggleCell(dayIdx, t))}
-                      className={`h-10 rounded-xl text-[10px] font-bold transition-all ${cls} ${
-                        isOtherKind ? 'opacity-90 cursor-default' : ''
+                      onClick={() => toggleCell(dayIdx, t)}
+                      className={`h-10 rounded-xl text-[10px] font-bold transition-all ${
+                        active
+                          ? 'bg-primary text-primary-foreground shadow-e1 hover:bg-primary/90'
+                          : 'bg-muted/70 hover:bg-primary/10 text-muted-foreground'
                       }`}
-                      title={title}
+                      title={
+                        active
+                          ? `Giờ trống ${DAY_NAMES[dayIdx]} ${t} — bấm để xóa`
+                          : `Bấm để thêm ${DAY_NAMES[dayIdx]} ${t}`
+                      }
                     >
-                      {content}
+                      {active ? <CheckCircle2 className="h-4 w-4 mx-auto" /> : '+'}
                     </button>
                   )
                 })}
@@ -286,26 +201,13 @@ export function TutorSchedulePanel() {
         <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground flex-wrap">
           <MousePointerClick className="h-3.5 w-3.5" />
           <span>
-            {mode === 'FREE' ? (
-              <>
-                Đang mở <span className="font-bold text-foreground">{freeCount}</span> giờ trống/tuần
-                {fixedCount > 0 && (
-                  <> và <span className="font-bold text-amber-600">{fixedCount}</span> khung lịch cố định</>
-                )}
-                . Muốn giờ bất thường (vd 19:00–21:00)? Dùng <span className="font-semibold">Khung giờ tùy chỉnh</span>.
-              </>
-            ) : (
-              <>
-                Đang có <span className="font-bold text-amber-600">{fixedCount}</span> khung giờ bận/tuần
-                (lớp đang dạy ngoài nền tảng). Phụ huynh sẽ thấy các khung này hiện
-                <span className="font-semibold"> "Giờ bận"</span> trên hồ sơ của bạn.
-              </>
-            )}
+            Đang mở <span className="font-bold text-foreground">{slots.length}</span> giờ trống/tuần.
+            Muốn giờ bất thường (vd 19:00–21:00)? Dùng <span className="font-semibold">Khung giờ tùy chỉnh</span>.
           </span>
         </div>
       </Card>
 
-      {/* Tổng hợp theo ngày — hiển thị đủ cả giờ trống lẫn lịch cố định */}
+      {/* Tổng hợp theo ngày */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {DAY_ORDER.map(dayIdx => {
           const daySlots = (byDay[dayIdx] || []).sort((a, b) => a.startTime.localeCompare(b.startTime))
@@ -324,15 +226,10 @@ export function TutorSchedulePanel() {
                   {daySlots.map(s => (
                     <span
                       key={s.id}
-                      className={`inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full text-xs font-semibold group ${
-                        isFixed(s)
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-muted/70'
-                      }`}
+                      className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full text-xs font-semibold group bg-muted/70"
                     >
-                      {isFixed(s) ? <Lock className="h-3 w-3" /> : <Clock className="h-3 w-3 text-primary" />}
+                      <Clock className="h-3 w-3 text-primary" />
                       {s.startTime}–{s.endTime}
-                      {isFixed(s) && <span className="font-medium text-amber-600/90">bận</span>}
                       <button
                         onClick={() => handleDelete(s)}
                         className="h-5 w-5 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
@@ -401,22 +298,10 @@ export function TutorSchedulePanel() {
               <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
             </div>
           </div>
-          <div className="space-y-1.5 pb-2">
-            <Label>Loại khung giờ</Label>
-            <select
-              value={customKind}
-              onChange={(e) => setCustomKind(e.target.value as SlotKind)}
-              className="w-full h-10 px-3 border rounded-lg bg-background text-sm"
-            >
-              <option value="FREE">Giờ trống — nhận học sinh mới</option>
-              <option value="FIXED">Giờ bận — lớp ngoài nền tảng, không nhận thêm</option>
-            </select>
-            <p className="text-xs text-muted-foreground">
-              {customKind === 'FIXED'
-                ? 'Dành cho lớp bạn đang dạy tại trường, trung tâm hoặc học sinh cũ. Phụ huynh sẽ thấy khung này được đánh dấu "Giờ bận". Nếu muốn mở lớp nhóm mới ngay trên nền tảng, dùng tab "Lớp học cố định".'
-                : 'Học sinh có thể đặt lịch trong khung giờ này.'}
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground pb-2">
+            Học sinh có thể đặt lịch 1-1 trong khung giờ này. Muốn mở lớp nhóm cố định?
+            Dùng tab <span className="font-semibold">Lớp học</span>.
+          </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Đóng</Button>
             <Button onClick={handleAddCustom} disabled={saving}>

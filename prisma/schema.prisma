@@ -144,10 +144,6 @@ model Availability {
   dayOfWeek  Int     // 0=Sunday ... 6=Saturday
   startTime  String  // HH:MM
   endTime    String  // HH:MM
-  // FREE  = khung giờ trống, nhận học sinh mới (đặt lịch được)
-  // FIXED = lịch dạy cố định gia sư đã có (dạy tại trường/trung tâm/lớp cũ)
-  //        → hiển thị công khai "Đã có lớp cố định", KHÔNG đặt được
-  kind       String  @default("FREE")
   tutor      User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
 }
 

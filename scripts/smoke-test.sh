@@ -43,7 +43,7 @@ echo "Tutor: $TUTOR_NAME | Giá môn: $SUBJECT_PRICE"
 AVAIL=$(curl -s "$BASE/api/tutors/$TUTOR_ID" | python3 -c "
 import json,sys,datetime,urllib.request
 d=json.load(sys.stdin)
-avails=[a for a in d['availabilities'] if a.get('kind')!='FIXED']
+avails=[a for a in d['availabilities']]
 # Lịch lớp học cố định (nhóm) của gia sư — tránh đặt 1-1 trùng giờ lớp
 cls=json.load(urllib.request.urlopen('$BASE/api/classes?tutorId=$TUTOR_ID'))
 cslots=[]

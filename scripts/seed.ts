@@ -555,24 +555,6 @@ async function main() {
     await db.availability.create({
       data: { tutorId: tutor.id, dayOfWeek: 0, startTime: '08:00', endTime: '20:00' }
     })
-
-    // Giáo viên đang dạy tại trường/trung tâm → đánh dấu lịch dạy cố định
-    // (slot FIXED): sáng các ngày trong tuần đã có lớp, chỉ nhận lớp thêm buổi tối.
-    // Phụ huynh xem hồ sơ sẽ thấy "Đã có lớp cố định" — minh bạch lịch bận thật.
-    const isSchoolTeacher = /Giáo viên|giáo viên|Giảng viên/.test(t.profession || '')
-    if (isSchoolTeacher) {
-      for (let day = 1; day <= 5; day++) {
-        await db.availability.create({
-          data: {
-            tutorId: tutor.id,
-            dayOfWeek: day,
-            startTime: '07:30',
-            endTime: '11:30',
-            kind: 'FIXED',
-          }
-        })
-      }
-    }
   }
   console.log(`✓ Created ${TUTORS.length} tutors across 5 cities`)
 

@@ -59,8 +59,8 @@ export async function GET(
   }
 
   // Lịch bận theo NGÀY CỤ THỂ trong 8 tuần tới (PENDING/CONFIRMED):
-  // để dialog đặt lịch vô hiệu hóa đúng giờ đã có người đặt trên nền tảng —
-  // phân biệt với slot FIXED (lịch cố định theo tuần, đã nằm trong availabilities).
+  // để dialog đặt lịch vô hiệu hóa đúng giờ đã có người đặt trên nền tảng
+  // (lớp học cố định theo tuần được trả riêng qua /api/classes).
   const today = new Date()
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const busySlots = await db.booking.findMany({
@@ -105,9 +105,8 @@ export async function GET(
       description: ts.description,
     })),
     availabilities: tutor.availabilities,
-    // Lịch bận theo ngày cụ thể (đã có lớp trên nền tảng) + số lớp cố định theo tuần
+    // Lịch bận theo ngày cụ thể (đã có lớp trên nền tảng)
     busySlots: busySlots.map(b => ({ date: b.date, startTime: b.startTime, endTime: b.endTime })),
-    fixedSlotsCount: tutor.availabilities.filter(a => a.kind === 'FIXED').length,
     avgRating: Math.round(avgRating * 10) / 10,
     reviewCount,
     reliability,

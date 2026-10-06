@@ -59,13 +59,10 @@ interface TutorDetail {
     dayOfWeek: number
     startTime: string
     endTime: string
-    // FREE = giờ trống nhận lớp mới | FIXED = lịch dạy cố định đã có của gia sư
-    kind?: string
   }[]
   // Lịch bận theo NGÀY CỤ THỂ (booking PENDING/CONFIRMED tương lai)
   // → dialog đặt lịch vô hiệu hóa đúng giờ đã có người đặt
   busySlots?: { date: string; startTime: string; endTime: string }[]
-  fixedSlotsCount?: number
   avgRating: number
   reviewCount: number
   // P0-1: điểm tin cậy công khai
@@ -109,16 +106,15 @@ interface ClassInfo {
 }
 
 // Generate time slots from tutor's availability (15-min increments)
-// Chỉ slot FREE (giờ trống) — slot FIXED là lịch dạy cố định, không sinh lựa chọn
 function generateSlotsFromAvailability(
-  availabilities: { dayOfWeek: number; startTime: string; endTime: string; kind?: string }[],
+  availabilities: { dayOfWeek: number; startTime: string; endTime: string }[],
   selectedDate: string
 ): string[] {
   if (!selectedDate) return []
   const date = new Date(selectedDate)
   const dayOfWeek = date.getDay()
 
-  const daySlots = availabilities.filter(a => a.dayOfWeek === dayOfWeek && a.kind !== 'FIXED')
+  const daySlots = availabilities.filter(a => a.dayOfWeek === dayOfWeek)
   if (daySlots.length === 0) return []
 
   const slots: string[] = []
@@ -141,13 +137,13 @@ function generateSlotsFromAvailability(
 }
 
 function isDateAvailable(
-  availabilities: { dayOfWeek: number; kind?: string }[],
+  availabilities: { dayOfWeek: number }[],
   dateStr: string
 ): boolean {
   if (!dateStr) return false
   const date = new Date(dateStr)
   const dayOfWeek = date.getDay()
-  return availabilities.some(a => a.dayOfWeek === dayOfWeek && a.kind !== 'FIXED')
+  return availabilities.some(a => a.dayOfWeek === dayOfWeek)
 }
 
 // Cộng n tuần vào YYYY-MM-DD (dùng cho hiển thị buổi cuối của khóa)
@@ -471,13 +467,6 @@ export function TutorProfilePage({ id }: { id: string }) {
     return classSlotsOfDate.some(b => start < toMin(b.endTime) && end > toMin(b.startTime))
   }
   const busyCount = availableSlots.filter(t => isSlotBusy(t) || isSlotClassBusy(t)).length
-
-  // Lịch dạy cố định của ngày đang chọn (để gợi ý vì sao thiếu giờ)
-  const fixedOfDay = bookingDate
-    ? tutor.availabilities.filter(
-        a => a.dayOfWeek === new Date(bookingDate).getDay() && a.kind === 'FIXED',
-      )
-    : []
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-6">
@@ -870,17 +859,13 @@ export function TutorProfilePage({ id }: { id: string }) {
             </div>
           </Card>
 
-          {/* Lịch dạy hàng tuần — hiển thị ĐẦY ĐỪ mọi khung giờ mỗi ngày:
-              giờ trống (nhận lớp mới) + lịch dạy cố định gia sư đã có (đã có lớp) */}
+          {/* Lịch dạy hàng tuần — hiển thị ĐẦY ĐỦ mọi khung giờ mỗi ngày */}
           <Card className="p-6">
             <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
               <h2 className="font-semibold text-lg">Lịch dạy hàng tuần</h2>
               <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-primary inline-block" /> Nhận lớp mới
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-amber-500 inline-block" /> Giờ bận (lớp ngoài nền tảng)
                 </span>
               </div>
             </div>
@@ -905,18 +890,10 @@ export function TutorProfilePage({ id }: { id: string }) {
                       {daySlots.length > 0 ? daySlots.map(s => (
                         <span
                           key={s.id}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            s.kind === 'FIXED'
-                              ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                              : 'bg-primary/10 text-primary border border-primary/20'
-                          }`}
-                          title={s.kind === 'FIXED'
-                            ? 'Gia sư bận khung giờ này (lớp đang dạy ngoài nền tảng) — không thể đặt'
-                            : 'Khung giờ trống — có thể đặt lịch'}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20"
+                          title="Khung giờ trống — có thể đặt lịch"
                         >
-                          {s.kind === 'FIXED' && <Lock className="h-3 w-3 shrink-0" />}
                           {s.startTime}–{s.endTime}
-                          {s.kind === 'FIXED' ? <span className="font-medium">· bận</span> : null}
                         </span>
                       )) : (
                         <span className="text-xs text-muted-foreground">Không có lịch</span>
@@ -927,13 +904,9 @@ export function TutorProfilePage({ id }: { id: string }) {
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              * Chỉ đặt được lịch trong khung <span className="font-medium text-primary">Nhận lớp mới</span>.
-              {(tutor.fixedSlotsCount ?? 0) > 0 && (
-                <> Khung <span className="font-medium text-amber-600">Giờ bận</span> là các lớp gia sư
-                đang dạy ngoài nền tảng.</>
-              )}
-              {(tutor.fixedSlotsCount ?? 0) === 0 && classes.length > 0 && (
-                <> Muốn học nhóm? Xem <span className="font-medium text-primary">Lớp học cố định</span> phía trên.</>
+              * Có thể đặt lịch 1-1 trong các khung giờ trên.
+              {classes.length > 0 && (
+                <> Muốn học nhóm theo lịch cố định? Xem <span className="font-medium text-primary">Lớp học cố định</span> phía trên.</>
               )}
               Lịch có thể thay đổi, vui lòng đặt lịch để gia sư xác nhận.
             </p>
@@ -1152,9 +1125,7 @@ export function TutorProfilePage({ id }: { id: string }) {
                 {bookingDate && tutor.availabilities.length > 0 && !isDateAvailable(tutor.availabilities, bookingDate) && (
                   <p className="text-[11px] text-amber-600 mt-1 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
-                    {fixedOfDay.length > 0
-                      ? 'Ngày này gia sư chỉ còn khung giờ bận. Chọn ngày khác.'
-                      : 'Gia sư không có lịch trống ngày này. Chọn ngày khác.'}
+                    Gia sư không có lịch trống ngày này. Chọn ngày khác.
                   </p>
                 )}
                 {bookingDate && isDateAvailable(tutor.availabilities, bookingDate) && (
@@ -1224,21 +1195,13 @@ export function TutorProfilePage({ id }: { id: string }) {
                     </div>
                   ) : (
                     <div className="rounded-lg border-2 border-dashed p-4 text-center text-xs text-muted-foreground">
-                      {fixedOfDay.length > 0
-                        ? 'Ngày này gia sư bận trọn ngày (lớp ngoài nền tảng). Chọn ngày khác.'
-                        : 'Gia sư không có lịch trống ngày này. Chọn ngày khác.'}
+                      Gia sư không có lịch trống ngày này. Chọn ngày khác.
                     </div>
                   )}
                   {busyCount > 0 && (
                     <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1">
                       <Lock className="h-3 w-3" />
                       {busyCount} khung giờ đã có lớp — đã vô hiệu hóa, vui lòng chọn giờ còn lại.
-                    </p>
-                  )}
-                  {fixedOfDay.length > 0 && availableSlots.length > 0 && (
-                    <p className="text-[11px] text-amber-600/90 mt-1.5 flex items-center gap-1">
-                      <Lock className="h-3 w-3" />
-                      Gia sư bận ngày này (lớp ngoài nền tảng): {fixedOfDay.map(f => `${f.startTime}–${f.endTime}`).join(', ')}.
                     </p>
                   )}
                   {classSlotsOfDate.length > 0 && availableSlots.length > 0 && (
