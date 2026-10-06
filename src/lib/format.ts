@@ -59,3 +59,31 @@ export function timeAgo(iso: string | Date): string {
   if (minutes > 0) return `${minutes} phút trước`
   return 'vừa xong'
 }
+
+// ===== Lớp học cố định (nhóm) =====
+// dayOfWeek: 0 = Chủ nhật ... 6 = Thứ 7 (đồng nhất convention của Availability)
+export const CLASS_DAY_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
+export const CLASS_DAY_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+
+export interface ClassSlot {
+  dayOfWeek: number
+  startTime: string
+  endTime: string
+}
+
+// Sắp xếp các buổi trong tuần: Thứ 2 → Chủ nhật
+export function sortClassSlots<T extends ClassSlot>(slots: T[]): T[] {
+  return [...slots].sort((a, b) => {
+    const av = a.dayOfWeek === 0 ? 7 : a.dayOfWeek
+    const bv = b.dayOfWeek === 0 ? 7 : b.dayOfWeek
+    return av - bv || a.startTime.localeCompare(b.startTime)
+  })
+}
+
+// "T3 18:00–20:30 · T5 18:00–20:30" — tóm tắt lịch học cố định trong tuần
+export function formatClassSchedule(slots: ClassSlot[]): string {
+  if (slots.length === 0) return 'Chưa có lịch'
+  return sortClassSlots(slots)
+    .map(s => `${CLASS_DAY_SHORT[s.dayOfWeek]} ${s.startTime}–${s.endTime}`)
+    .join(' · ')
+}

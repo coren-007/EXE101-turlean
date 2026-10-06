@@ -166,6 +166,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Giờ đặt không nằm trong lịch trống của gia sư' }, { status: 400 })
   }
 
+  // Chặn đặt 1-1 trùng LỚP HỌC CỐ ĐỊNH (nhóm) của gia sư — lớp OPEN/PAUSED vẫn đang diễn ra,
+  // CLOSED mới kết thúc. Kiểm tra theo từng ngày của khóa định kỳ bên dưới.
+  const classConflictFor = async (d: string) => {
+    const dow = new Date(`${d}T00:00`).getDay()
+    const slots = await db.classScheduleSlot.findMany({
+      where: {
+        dayOfWeek: dow,
+        class: { tutorId, status: { in: ['OPEN', 'PAUSED'] } },
+      },
+      include: { class: { select: { title: true } } },
+    })
+    return slots.find(
+      s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
+    )
+  }
+  const classConflict = await classConflictFor(date)
+  if (classConflict) {
+    return NextResponse.json(
+      {
+        error: `Trùng lịch lớp học cố định "${classConflict.class.title}" (${classConflict.startTime}–${classConflict.endTime}). Vui lòng chọn giờ khác.`,
+      },
+      { status: 400 },
+    )
+  }
+
   // Conflict check cho GIA SƯ (theo từng ngày của khóa định kỳ)
   const conflictFor = async (d: string, who: 'tutor' | 'student') =>
     db.booking.findFirst({
@@ -202,7 +227,12 @@ export async function POST(req: NextRequest) {
     } else if (await conflictFor(d, 'student')) {
       skipped.push({ date: d, reason: 'Bạn có lịch học trùng giờ' })
     } else {
-      validDates.push(d)
+      const cc = await classConflictFor(d)
+      if (cc) {
+        skipped.push({ date: d, reason: `Trùng lớp cố định "${cc.class.title}"` })
+      } else {
+        validDates.push(d)
+      }
     }
   }
 

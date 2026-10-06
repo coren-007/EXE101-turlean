@@ -185,3 +185,105 @@ export async function notifyCancellation(params: {
     body,
   })
 }
+
+// ===== Lớp học cố định (nhóm) — thông báo đăng ký / duyệt học sinh =====
+
+/** Thông báo cho GIA SƯ khi phụ huynh/học sinh đăng ký vào lớp học cố định */
+export async function notifyTutorNewEnrollment(params: {
+  tutorId: string
+  studentParentId: string
+  parentName: string
+  studentName: string
+  classTitle: string
+  schedule: string // "T3 18:00–20:30 · T5 18:00–20:30"
+  enrolledCount: number // sĩ số đã duyệt hiện tại
+  capacity: number
+  note?: string | null
+}) {
+  const who =
+    params.studentName && params.studentName !== params.parentName
+      ? `học sinh ${params.studentName} (do ${params.parentName} đăng ký)`
+      : params.parentName
+  const lines = [
+    `[Đăng ký lớp học] ${who} đã gửi đăng ký vào lớp "${params.classTitle}".`,
+    `Lịch học cố định: ${params.schedule}. Lớp hiện có ${params.enrolledCount}/${params.capacity} học sinh.`,
+    'Vui lòng duyệt hoặc từ chối trong Bảng điều khiển — tab "Lớp học".',
+  ]
+  if (params.note) lines.push(`Lời nhắn: ${params.note}`)
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentParentId,
+    senderId: params.studentParentId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho PHỤ HUYNH/HỌC SINH khi được duyệt vào lớp */
+export async function notifyStudentEnrollmentApproved(params: {
+  tutorId: string
+  studentId: string
+  tutorName: string
+  studentName: string
+  classTitle: string
+  schedule: string
+  address?: string | null
+  monthlyFee?: number | null
+}) {
+  const lines = [
+    `[Đã vào lớp] Gia sư ${params.tutorName} đã duyệt ${params.studentName} vào lớp "${params.classTitle}".`,
+    `Lịch học cố định: ${params.schedule}.`,
+  ]
+  if (params.address) lines.push(`Địa điểm: ${params.address}.`)
+  if (params.monthlyFee) lines.push(`Học phí: ${vnd(params.monthlyFee)}/tháng — thanh toán trực tiếp cho gia sư.`)
+  lines.push('Chi tiết lớp học trong Bảng điều khiển của bạn.')
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho PHỤ HUYNH/HỌC SINH khi đăng ký lớp bị từ chối */
+export async function notifyStudentEnrollmentRejected(params: {
+  tutorId: string
+  studentId: string
+  tutorName: string
+  studentName: string
+  classTitle: string
+}) {
+  const body =
+    `[Từ chối đăng ký] Gia sư ${params.tutorName} chưa nhận ${params.studentName} vào lớp "${params.classTitle}".` +
+    ' Có thể lớp đã đủ sĩ số. Bạn vẫn có thể nhắn tin cho gia sư hoặc tìm lớp khác phù hợp.'
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body,
+  })
+}
+
+/** Thông báo cho GIA SƯ khi phụ huynh/học sinh rút đăng ký (hoặc rời lớp) */
+export async function notifyTutorEnrollmentCancelled(params: {
+  tutorId: string
+  studentId: string
+  parentName: string
+  studentName: string
+  classTitle: string
+  wasApproved: boolean // true = đã từng vào lớp rồi rời, false = rút đăng ký đang chờ duyệt
+}) {
+  const who =
+    params.studentName && params.studentName !== params.parentName
+      ? `học sinh ${params.studentName} (phụ huynh ${params.parentName})`
+      : params.parentName
+  const body =
+    `[${params.wasApproved ? 'Rời lớp' : 'Rút đăng ký'}] ${who} đã ${
+      params.wasApproved ? 'rời' : 'rút đăng ký khỏi'
+    } lớp "${params.classTitle}". Sĩ số lớp được cập nhật tự động.`
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.studentId,
+    body,
+  })
+}

@@ -6,7 +6,7 @@ export type View =
   | { name: 'tutor'; id: string }
   | { name: 'login' }
   | { name: 'register' }
-  | { name: 'dashboard'; tab?: 'overview' | 'subjects' | 'schedule' }
+  | { name: 'dashboard'; tab?: 'overview' | 'subjects' | 'schedule' | 'classes' }
   | { name: 'profile-edit' }
   | { name: 'onboarding' }
   | { name: 'manage-subjects' }
@@ -50,7 +50,7 @@ function parseInitialView(): View {
   if (v === 'register') return { name: 'register' }
   if (v === 'dashboard') {
     const t = params.get('tab')
-    const valid = ['overview', 'subjects', 'schedule']
+    const valid = ['overview', 'subjects', 'schedule', 'classes']
     return { name: 'dashboard', tab: valid.includes(t || '') ? (t as any) : undefined }
   }
   if (v === 'profile-edit') return { name: 'profile-edit' }

@@ -25,6 +25,8 @@ import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
 import { TutorSubjectsPanel } from '@/components/dashboard/tutor-subjects-panel'
 import { TutorSchedulePanel } from '@/components/dashboard/tutor-schedule-panel'
+import { TutorClassesPanel } from '@/components/dashboard/tutor-classes-panel'
+import { StudentClassesPanel } from '@/components/dashboard/student-classes-panel'
 
 interface Booking {
   id: string
@@ -165,9 +167,9 @@ interface ClassGroup {
 export function DashboardPage() {
   const { user, navigate, view } = useApp()
 
-  // Workspace tab cho gia sư: Tổng quan / Môn & giá / Lịch dạy
+  // Workspace tab cho gia sư: Tổng quan / Môn & giá / Lịch dạy / Lớp học
   // (tương thích view cũ manage-subjects / manage-availability)
-  const activeWsTab: 'overview' | 'subjects' | 'schedule' =
+  const activeWsTab: 'overview' | 'subjects' | 'schedule' | 'classes' =
     view.name === 'dashboard' && view.tab
       ? view.tab
       : view.name === 'manage-subjects'
@@ -185,6 +187,8 @@ export function DashboardPage() {
   const [fixedSlots, setFixedSlots] = useState<{ dayOfWeek: number; startTime: string; endTime: string; kind?: string }[]>([])
   // Mục đích 1 — lịch tuần: điều hướng giữa các tuần
   const [weekOffset, setWeekOffset] = useState(0)
+  // Lớp học cố định (nhóm): đếm cho thẻ hành động nhanh + badge tab
+  const [classStats, setClassStats] = useState<{ open: number; pending: number } | null>(null)
 
   // P0-1: dialog hủy lịch kèm lý do
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null)
@@ -210,12 +214,23 @@ export function DashboardPage() {
       user.role === 'TUTOR'
         ? fetch('/api/tutors/me/availability').then(r => r.json()).catch(() => null)
         : Promise.resolve(null),
-    ]).then(([data, s, rel, avail]) => {
+      // Lớp học cố định (nhóm) của gia sư — đếm lớp đang mở + đơn chờ duyệt
+      user.role === 'TUTOR'
+        ? fetch('/api/classes/mine').then(r => r.json()).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([data, s, rel, avail, clsMine]) => {
       setBookings(data.bookings || [])
       if (s?.stats) setStats(s.stats)
       if (s?.completeness) setCompleteness(s.completeness)
       if (rel?.reliability) setReliabilityData(rel)
       if (avail?.availability) setFixedSlots(avail.availability.filter((a: any) => a.kind === 'FIXED'))
+      if (clsMine?.classes) {
+        const open = clsMine.classes.filter((c: any) => c.status === 'OPEN').length
+        const pending = clsMine.classes.reduce(
+          (sum: number, c: any) => sum + c.enrollments.filter((e: any) => e.status === 'PENDING').length, 0,
+        )
+        setClassStats({ open, pending })
+      }
       setLoading(false)
     })
   }, [user])
@@ -591,7 +606,7 @@ export function DashboardPage() {
             <CalendarCheck className="h-4 w-4 text-primary" /> Lịch tuần
             {fixedSlots.length > 0 && (
               <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-                {fixedSlots.length} khung cố định/tuần
+                {fixedSlots.length} khung giờ bận/tuần
               </span>
             )}
           </h3>
@@ -627,9 +642,9 @@ export function DashboardPage() {
                   <div
                     key={`fix-${f.dayOfWeek}-${f.startTime}`}
                     className="text-[9px] leading-tight px-1 py-0.5 rounded truncate bg-amber-50 text-amber-700 border border-amber-200"
-                    title={`Lịch dạy cố định ${f.startTime}–${f.endTime} — không nhận lớp thêm`}
+                    title={`Giờ bận ${f.startTime}–${f.endTime} (lớp ngoài nền tảng) — không nhận lớp thêm`}
                   >
-                    {f.startTime} Lớp cố định
+                    {f.startTime} Giờ bận
                   </div>
                 ))}
                 {sessions.slice(0, 2).map(s => (
@@ -887,12 +902,13 @@ export function DashboardPage() {
     </>
   )
 
-  // TUTOR DASHBOARD LAYOUT — workspace 3 tab: Tổng quan / Môn & giá / Lịch dạy
+  // TUTOR DASHBOARD LAYOUT — workspace 4 tab: Tổng quan / Môn & giá / Lịch dạy / Lớp học
   if (isTutor) {
-    const wsTabs: { id: 'overview' | 'subjects' | 'schedule'; label: string }[] = [
+    const wsTabs: { id: 'overview' | 'subjects' | 'schedule' | 'classes'; label: string }[] = [
       { id: 'overview', label: 'Tổng quan' },
       { id: 'subjects', label: 'Môn & giá' },
       { id: 'schedule', label: 'Lịch dạy' },
+      { id: 'classes', label: 'Lớp học cố định' },
     ]
     return (
       <div>
@@ -904,13 +920,18 @@ export function DashboardPage() {
                 <button
                   key={t.id}
                   onClick={() => navigate({ name: 'dashboard', tab: t.id === 'overview' ? undefined : t.id })}
-                  className={`px-4 h-9 rounded-full text-sm font-bold whitespace-nowrap transition-all ${
+                  className={`px-4 h-9 rounded-full text-sm font-bold whitespace-nowrap transition-all relative ${
                     activeWsTab === t.id
                       ? 'bg-foreground text-background shadow-e1'
                       : 'text-muted-foreground hover:text-foreground bg-muted/60'
                   }`}
                 >
                   {t.label}
+                  {t.id === 'classes' && classStats && classStats.pending > 0 && (
+                    <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                      {classStats.pending}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -1022,7 +1043,7 @@ export function DashboardPage() {
         </div>
 
         {/* Quick actions */}
-        <div className="grid sm:grid-cols-3 gap-3 mb-6">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
           <Card
             className="p-4 cursor-pointer hover:shadow-md transition-all hover:border-primary/30 group"
             onClick={() => navigate({ name: 'dashboard', tab: 'subjects' })}
@@ -1053,6 +1074,28 @@ export function DashboardPage() {
                 <div>
                   <p className="font-semibold text-sm">Lịch dạy</p>
                   <p className="text-xs text-muted-foreground">{stats?.availabilityCount || 0} khung giờ/tuần</p>
+                </div>
+              </div>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+            </div>
+          </Card>
+
+          <Card
+            className="p-4 cursor-pointer hover:shadow-md transition-all hover:border-primary/30 group"
+            onClick={() => navigate({ name: 'dashboard', tab: 'classes' })}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <GraduationCap className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">Lớp học cố định</p>
+                  <p className="text-xs text-muted-foreground">
+                    {classStats
+                      ? `${classStats.open} lớp đang mở${classStats.pending > 0 ? ` · ${classStats.pending} đơn chờ` : ''}`
+                      : 'Mở lớp nhóm tại nhà bạn'}
+                  </p>
                 </div>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
@@ -1158,6 +1201,7 @@ export function DashboardPage() {
 
         {activeWsTab === 'subjects' && <TutorSubjectsPanel />}
         {activeWsTab === 'schedule' && <TutorSchedulePanel />}
+        {activeWsTab === 'classes' && <TutorClassesPanel />}
 
         <DashboardDialogs />
       </div>
@@ -1259,6 +1303,9 @@ export function DashboardPage() {
 
       {/* P0-1: độ tin cậy của học sinh/phụ huynh */}
       <ReliabilitySection />
+
+      {/* Lớp học cố định (nhóm) đã đăng ký — hiện khi có ít nhất 1 đăng ký */}
+      <StudentClassesPanel />
 
       {/* Mục đích 1 — lịch tuần + lớp học đang theo học */}
       <WeekSchedule />

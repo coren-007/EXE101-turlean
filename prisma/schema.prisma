@@ -51,6 +51,9 @@ model User {
   conversationsAsTutor   Conversation[] @relation("TutorConversations")
   conversationsAsStudent Conversation[] @relation("StudentConversations")
   messagesSent    Message[]    @relation("MessageSender")
+  // Lớp học cố định (nhóm) gia sư mở tại nhà mình — phụ huynh/học sinh đăng ký vào lớp
+  groupClasses      GroupClass[]     @relation("GroupClassTutor")
+  classEnrollments  ClassEnrollment[] @relation("ClassEnrollmentStudent")
 }
 
 model Subject {
@@ -62,6 +65,7 @@ model Subject {
   level     String? // PRIMARY | SECONDARY | HIGH | ALL
   tutors    TutorSubject[]
   bookings  Booking[]
+  classes   GroupClass[]
 }
 
 model TutorSubject {
@@ -178,6 +182,69 @@ model Message {
   sender         User         @relation("MessageSender", fields: [senderId], references: [id])
 
   @@index([conversationId, createdAt])
+}
+
+// ===== Lớp học cố định (nhóm) =====
+// Gia sư mở lớp học tại nhà mình theo lịch cố định hằng tuần (vd Lớp Toán 10:
+// thứ 3 & thứ 5, 18:00–20:30). Phụ huynh/học sinh xem lịch + sức chứa trên hồ
+// sơ gia sư và đăng ký vào lớp; gia sư duyệt từng học sinh.
+model GroupClass {
+  id           String   @id @default(cuid())
+  tutorId      String
+  subjectId    String
+  title        String   // vd "Lớp Toán 10 — Nâng cao"
+  gradeLevel   String?  // vd "Lớp 10", "Cấp 3", "Tiểu học"
+  description  String?
+  // AT_TUTOR_HOME = học tại nhà gia sư (mặc định) | ONLINE = học trực tuyến
+  meetingType  String   @default("AT_TUTOR_HOME")
+  address      String?  // địa điểm học (mặc định lấy địa chỉ nhà gia sư)
+  capacity     Int      @default(8) // sĩ số tối đa của lớp
+  monthlyFee   Int?     // học phí theo tháng (đồng)
+  // OPEN = đang tuyển học sinh | PAUSED = tạm dừng tuyển | CLOSED = đã đóng lớp
+  status       String   @default("OPEN")
+  startDate    String?  // YYYY-MM-DD — ngày khai giảng
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tutor        User                @relation("GroupClassTutor", fields: [tutorId], references: [id], onDelete: Cascade)
+  subject      Subject             @relation(fields: [subjectId], references: [id])
+  schedule     ClassScheduleSlot[]
+  enrollments  ClassEnrollment[]
+
+  @@index([tutorId])
+}
+
+// Một buổi học cố định trong tuần của lớp: (thứ, giờ bắt đầu, giờ kết thúc)
+model ClassScheduleSlot {
+  id        String @id @default(cuid())
+  classId   String
+  dayOfWeek Int    // 0=Chủ nhật ... 6=Thứ 7 (đồng nhất Availability)
+  startTime String // HH:MM
+  endTime   String // HH:MM
+  class     GroupClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([classId])
+}
+
+// Một phụ huynh/học sinh đăng ký vào lớp — gia sư duyệt (APPROVED) hoặc từ chối
+model ClassEnrollment {
+  id              String   @id @default(cuid())
+  classId         String
+  studentParentId String
+  studentName     String?  // tên học sinh (phụ huynh đăng ký hộ con)
+  note            String?
+  // PENDING = chờ gia sư duyệt | APPROVED = đã vào lớp
+  // REJECTED = bị từ chối | CANCELLED = phụ huynh/học sinh rút lại
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  class           GroupClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  studentParent   User       @relation("ClassEnrollmentStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, studentParentId])
+  @@index([classId])
+  @@index([studentParentId])
 }
 
 model Session {
