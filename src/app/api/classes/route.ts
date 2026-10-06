@@ -26,6 +26,8 @@ const classSchema = z.object({
   capacity: z.number().int().min(1, 'Sĩ số tối thiểu 1').max(50, 'Sĩ số tối đa 50'),
   monthlyFee: z.number().int().min(0).max(100_000_000).optional().nullable(),
   startDate: z.string().regex(DATE_RE, 'Ngày khai giảng không hợp lệ').optional().nullable(),
+  // Hạn chót đăng ký — null/omitted = không giới hạn (tuyển đến khi đủ sĩ số)
+  enrollDeadline: z.string().regex(DATE_RE, 'Hạn đăng ký không hợp lệ').optional().nullable(),
   schedule: z.array(slotSchema).min(1, 'Lớp cần ít nhất 1 buổi học cố định trong tuần').max(10),
 })
 
@@ -113,6 +115,9 @@ export async function GET(req: NextRequest) {
         monthlyFee: c.monthlyFee,
         status: c.status,
         startDate: c.startDate,
+        enrollDeadline: c.enrollDeadline,
+        // Hạn đăng ký đã qua? (UI dùng để khoá nút đăng ký — server vẫn chặn ở enroll)
+        deadlinePassed: !!(c.enrollDeadline && c.enrollDeadline < todayStr),
         schedule: c.schedule.map(s => ({
           dayOfWeek: s.dayOfWeek,
           startTime: s.startTime,
@@ -150,8 +155,20 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
-  const { title, subjectId, gradeLevel, description, meetingType, address, capacity, monthlyFee, startDate, schedule } = parsed.data
+  const { title, subjectId, gradeLevel, description, meetingType, address, capacity, monthlyFee, startDate, enrollDeadline, schedule } = parsed.data
   const meetType = meetingType ?? 'AT_TUTOR_HOME'
+
+  // Hạn đăng ký phải từ hôm nay trở đi (đặt hạn trong quá khứ vô nghĩa khi mở lớp)
+  if (enrollDeadline) {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    if (enrollDeadline < todayStr) {
+      return NextResponse.json(
+        { error: 'Hạn đăng ký không được trước hôm nay' },
+        { status: 400 },
+      )
+    }
+  }
 
   // Slot giờ hợp lệ: bắt đầu trước kết thúc
   for (const s of schedule) {
@@ -213,6 +230,7 @@ export async function POST(req: NextRequest) {
       capacity,
       monthlyFee,
       startDate,
+      enrollDeadline,
       status: 'OPEN',
       schedule: {
         create: schedule.map(s => ({

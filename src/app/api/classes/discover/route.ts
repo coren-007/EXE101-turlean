@@ -95,6 +95,8 @@ export async function GET(req: NextRequest) {
       capacity: c.capacity,
       monthlyFee: c.monthlyFee,
       startDate: c.startDate,
+      enrollDeadline: c.enrollDeadline,
+      deadlinePassed: !!(c.enrollDeadline && c.enrollDeadline < todayStr),
       schedule: c.schedule.map(s => ({
         dayOfWeek: s.dayOfWeek,
         startTime: s.startTime,

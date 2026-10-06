@@ -435,3 +435,33 @@ export async function notifyStudentsClassClosed(params: {
     })
   }
 }
+
+/**
+ * Nhắc lịch NGÀY MAI cho học sinh trong lớp nhóm (cron /api/cron/reminder).
+ * Gửi SYSTEM message vào hội thoại tutor↔student (kèm email nếu cấu hình Resend).
+ */
+export async function notifyStudentsClassSessionReminder(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  subjectName: string
+  date: string
+  time: string
+  endTime: string
+  address: string | null
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nhắc lịch] Lớp "${params.classTitle}" (môn ${params.subjectName}) có buổi học NGÀY MAI: ` +
+      `${params.date} · ${params.time}–${params.endTime}.` +
+      (params.address ? `\nĐịa điểm: ${params.address}.` : '') +
+      '\nVui lòng đến đúng giờ.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}

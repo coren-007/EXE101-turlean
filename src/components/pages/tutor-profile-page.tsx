@@ -99,6 +99,8 @@ interface ClassInfo {
   monthlyFee?: number | null
   status: string // OPEN | PAUSED
   startDate?: string | null
+  enrollDeadline?: string | null
+  deadlinePassed?: boolean
   schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
   enrolledCount: number
   pendingCount: number
@@ -683,6 +685,8 @@ export function TutorProfilePage({ id }: { id: string }) {
                   const full = enrolled >= cls.capacity
                   const pct = Math.min(100, Math.round((enrolled / cls.capacity) * 100))
                   const isPaused = cls.status === 'PAUSED'
+                  const deadlinePassed = !!cls.deadlinePassed ||
+                    !!(cls.enrollDeadline && cls.enrollDeadline < new Date().toISOString().slice(0, 10))
                   const isMine = user && tutor.id === user.id
                   const my = cls.myEnrollment ?? null
                   return (
@@ -739,6 +743,18 @@ export function TutorProfilePage({ id }: { id: string }) {
                         {cls.startDate && (
                           <span className="text-[11px] text-muted-foreground">
                             · Khai giảng {formatDate(cls.startDate)}
+                          </span>
+                        )}
+                        {cls.enrollDeadline && cls.status === 'OPEN' && (
+                          <span
+                            className={`text-[11px] inline-flex items-center gap-1 font-medium ${
+                              deadlinePassed ? 'text-rose-600' : 'text-sky-600'
+                            }`}
+                          >
+                            <CalendarClock className="h-3 w-3" />
+                            {deadlinePassed
+                              ? `Đã hết hạn đăng ký (${formatDate(cls.enrollDeadline)})`
+                              : `Hạn đăng ký: ${formatDate(cls.enrollDeadline)}`}
                           </span>
                         )}
                       </div>
@@ -825,10 +841,15 @@ export function TutorProfilePage({ id }: { id: string }) {
                               </Button>
                             )}
                             {(my.status === 'REJECTED' || my.status === 'CANCELLED') &&
-                              cls.status === 'OPEN' && (
+                              cls.status === 'OPEN' && !deadlinePassed && (
                               <Button size="sm" variant="outline" onClick={() => openEnrollDialog(cls)}>
                                 Đăng ký lại
                               </Button>
+                            )}
+                            {(my.status === 'REJECTED' || my.status === 'CANCELLED') && deadlinePassed && (
+                              <Badge className="bg-rose-100 text-rose-700 border-0 gap-1 text-[10px]">
+                                <CalendarClock className="h-3 w-3" /> Đã hết hạn đăng ký
+                              </Badge>
                             )}
                           </>
                         ) : !user ? (
@@ -844,10 +865,14 @@ export function TutorProfilePage({ id }: { id: string }) {
                         ) : user.role === 'TUTOR' ? null : (
                           <Button
                             size="sm"
-                            disabled={isPaused}
+                            disabled={isPaused || deadlinePassed}
                             onClick={() => openEnrollDialog(cls)}
                           >
-                            {isPaused ? 'Tạm dừng tuyển sinh' : full ? 'Vào danh sách chờ' : 'Đăng ký lớp học'}
+                            {isPaused
+                              ? 'Tạm dừng tuyển sinh'
+                              : deadlinePassed
+                                ? 'Đã hết hạn đăng ký'
+                                : full ? 'Vào danh sách chờ' : 'Đăng ký lớp học'}
                           </Button>
                         )}
                       </div>
@@ -1436,6 +1461,12 @@ export function TutorProfilePage({ id }: { id: string }) {
             </div>
 
             <div className="rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
+              {enrollTarget?.enrollDeadline && (
+                <p className="text-sky-700 font-medium flex items-center gap-1.5">
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  Hạn chót đăng ký: <b>{formatDate(enrollTarget.enrollDeadline)}</b>
+                </p>
+              )}
               <p>
                 Sĩ số hiện tại:{' '}
                 <b className="text-foreground">

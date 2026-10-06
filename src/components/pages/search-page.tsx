@@ -85,6 +85,8 @@ interface ClassDiscoverItem {
   capacity: number
   monthlyFee?: number | null
   startDate?: string | null
+  enrollDeadline?: string | null
+  deadlinePassed?: boolean
   schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
   enrolledCount: number
   remaining: number
@@ -907,7 +909,7 @@ function ClassCard({ cls, onSelect }: { cls: ClassDiscoverItem; onSelect: () => 
           )}
         </div>
         {/* Sĩ số còn trống / danh sách chờ */}
-        <div className="absolute bottom-3 right-3">
+        <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1.5">
           {full ? (
             <Badge className="bg-rose-600 text-white border-0 text-[10px] font-bold gap-1">
               <Hourglass className="h-3 w-3" /> Đã đủ — vào danh sách chờ
@@ -915,6 +917,11 @@ function ClassCard({ cls, onSelect }: { cls: ClassDiscoverItem; onSelect: () => 
           ) : (
             <Badge className="bg-emerald-600 text-white border-0 text-[10px] font-bold gap-1">
               <Users className="h-3 w-3" /> Còn {cls.remaining} chỗ
+            </Badge>
+          )}
+          {cls.deadlinePassed && (
+            <Badge className="bg-rose-100 text-rose-700 border-0 text-[10px] font-bold gap-1">
+              <CalendarClock className="h-3 w-3" /> Hết hạn đăng ký
             </Badge>
           )}
         </div>
@@ -969,6 +976,20 @@ function ClassCard({ cls, onSelect }: { cls: ClassDiscoverItem; onSelect: () => 
         ) : (
           <p className="text-[11px] text-muted-foreground flex items-center gap-1">
             <CalendarClock className="h-3 w-3" /> Lịch sắp xếp khi vào lớp
+          </p>
+        )}
+
+        {/* Hạn đăng ký — hết hạn thì hiện nổi để phụ huynh không chọn nhầm */}
+        {cls.enrollDeadline && (
+          <p
+            className={`text-[11px] flex items-center gap-1 font-medium ${
+              cls.deadlinePassed ? 'text-rose-600' : 'text-sky-600'
+            }`}
+          >
+            <CalendarClock className="h-3 w-3 shrink-0" />
+            {cls.deadlinePassed
+              ? `Đã hết hạn đăng ký (${formatDate(cls.enrollDeadline)})`
+              : `Hạn đăng ký: ${formatDate(cls.enrollDeadline)}`}
           </p>
         )}
 

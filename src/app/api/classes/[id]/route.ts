@@ -29,6 +29,8 @@ const patchSchema = z.object({
   capacity: z.number().int().min(1, 'Sĩ số tối thiểu 1').max(50, 'Sĩ số tối đa 50').optional(),
   monthlyFee: z.number().int().min(0).max(100_000_000).optional().nullable(),
   startDate: z.string().regex(DATE_RE, 'Ngày khai giảng không hợp lệ').optional().nullable(),
+  // Hạn chót đăng ký — null = bỏ giới hạn; cho phép đặt ngày quá khứ (đóng đăng ký ngay)
+  enrollDeadline: z.string().regex(DATE_RE, 'Hạn đăng ký không hợp lệ').optional().nullable(),
   status: z.enum(['OPEN', 'PAUSED', 'CLOSED']).optional(),
   schedule: z
     .array(
@@ -170,7 +172,7 @@ export async function PATCH(
   const data: Record<string, unknown> = {}
   for (const key of [
     'title', 'subjectId', 'gradeLevel', 'description', 'meetingType',
-    'address', 'capacity', 'monthlyFee', 'startDate', 'status',
+    'address', 'capacity', 'monthlyFee', 'startDate', 'enrollDeadline', 'status',
   ] as const) {
     if (body[key] !== undefined) data[key] = body[key]
   }

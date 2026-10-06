@@ -44,6 +44,8 @@ export interface GroupClass {
   status: string
   startDate: string | null
   schedule: Slot[]
+  // Gía sư chủ lớp (bản phía học sinh từ /api/enrollments/mine)
+  tutor?: { id: string; name: string; avatar?: string | null; profession?: string | null; district?: string | null } | null
   enrollments: Enrollment[]
   sessions: ClassSessionItem[]
   stats: {
@@ -69,6 +71,8 @@ export interface BookingItem {
   seriesId?: string | null
   seriesTotal?: number | null
   student: { id: string; name: string; avatar?: string | null; phone?: string | null; address?: string | null; district?: string | null }
+  // Gia sư dạy buổi 1-1 (bản phía học sinh từ /api/bookings?role=student)
+  tutor?: { id: string; name: string; avatar?: string | null; profession?: string | null } | null
   subject: { id: string; name: string }
 }
 

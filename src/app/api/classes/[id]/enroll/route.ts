@@ -70,6 +70,18 @@ export async function POST(
     )
   }
 
+  // HẠN ĐĂNG KÝ: quá hạn thì không nhận đăng ký mới (kể cả danh sách chờ)
+  if (cls.enrollDeadline) {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    if (cls.enrollDeadline < todayStr) {
+      return NextResponse.json(
+        { error: `Đã hết hạn đăng ký lớp này (hạn chót ${cls.enrollDeadline}) — vui lòng tìm lớp khác hoặc liên hệ gia sư` },
+        { status: 400 },
+      )
+    }
+  }
+
   const approved = cls.enrollments.filter(e => e.status === 'APPROVED').length
   const isFull = approved >= cls.capacity
   const waiting = cls.enrollments

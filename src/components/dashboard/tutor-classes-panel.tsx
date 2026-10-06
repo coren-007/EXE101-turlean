@@ -91,6 +91,7 @@ interface GroupClass {
   monthlyFee: number | null
   status: string
   startDate: string | null
+  enrollDeadline: string | null
   schedule: Slot[]
   enrollments: Enrollment[]
   sessions: ClassSessionItem[]
@@ -119,6 +120,7 @@ interface ClassForm {
   capacity: number
   monthlyFee: string
   startDate: string
+  enrollDeadline: string
   schedule: Slot[]
 }
 
@@ -132,6 +134,7 @@ const emptyForm = (): ClassForm => ({
   capacity: 8,
   monthlyFee: '',
   startDate: '',
+  enrollDeadline: '',
   schedule: [{ dayOfWeek: 2, startTime: '18:00', endTime: '20:30' }],
 })
 
@@ -230,6 +233,7 @@ export function TutorClassesPanel() {
       capacity: cls.capacity,
       monthlyFee: cls.monthlyFee != null ? String(cls.monthlyFee) : '',
       startDate: cls.startDate ?? '',
+      enrollDeadline: cls.enrollDeadline ?? '',
       schedule: cls.schedule.length > 0 ? cls.schedule.map(s => ({ ...s })) : emptyForm().schedule,
     })
     setFormOpen(true)
@@ -263,6 +267,10 @@ export function TutorClassesPanel() {
     if (form.monthlyFee && (isNaN(Number(form.monthlyFee)) || Number(form.monthlyFee) < 0)) {
       return 'Học phí tháng không hợp lệ'
     }
+    // Hạn đăng ký: khi TẠO MỚI không được trước hôm nay (khi sửa cho phép — để đóng đăng ký ngay)
+    if (!editing && form.enrollDeadline && form.enrollDeadline < dateKeyNow()) {
+      return 'Hạn đăng ký không được trước hôm nay'
+    }
     return null
   }
 
@@ -284,6 +292,7 @@ export function TutorClassesPanel() {
         capacity: Number(form.capacity),
         monthlyFee: form.monthlyFee ? Number(form.monthlyFee) : null,
         startDate: form.startDate || null,
+        enrollDeadline: form.enrollDeadline || null,
         schedule: form.schedule,
       }
       const res = editing
@@ -698,6 +707,21 @@ export function TutorClassesPanel() {
                       {waitlist.length > 0 && (
                         <Badge className="bg-violet-100 text-violet-700 border-0 text-[10px] gap-1">
                           <Hourglass className="h-3 w-3" /> {waitlist.length} chờ chỗ
+                        </Badge>
+                      )}
+                      {cls.status === 'OPEN' && cls.enrollDeadline && (
+                        <Badge
+                          className={`border-0 text-[10px] gap-1 ${
+                            cls.enrollDeadline < dateKeyNow()
+                              ? 'bg-rose-100 text-rose-700'
+                              : 'bg-sky-100 text-sky-700'
+                          }`}
+                          title="Hạn chót phụ huynh gửi đăng ký vào lớp"
+                        >
+                          <CalendarClock className="h-3 w-3" />
+                          {cls.enrollDeadline < dateKeyNow()
+                            ? `Hết hạn đăng ký ${formatDate(cls.enrollDeadline)}`
+                            : `Hạn đăng ký ${formatDate(cls.enrollDeadline)}`}
                         </Badge>
                       )}
                     </div>
@@ -1397,7 +1421,7 @@ export function TutorClassesPanel() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <Label className="text-sm font-semibold mb-1.5 block">Sĩ số tối đa *</Label>
                 <Input
@@ -1422,6 +1446,29 @@ export function TutorClassesPanel() {
                   value={form.startDate}
                   onChange={(e) => setForm(prev => ({ ...prev, startDate: e.target.value }))}
                 />
+              </div>
+              <div>
+                <Label className="text-sm font-semibold mb-1.5 flex items-center gap-1">
+                  Hạn đăng ký
+                  <span
+                    className="h-4 w-4 rounded-full bg-muted text-[9px] font-bold inline-flex items-center justify-center text-muted-foreground cursor-help shrink-0"
+                    title="Ngày chót phụ huynh được gửi đăng ký. Bỏ trống = tuyển liên tục đến khi đủ sĩ số. Sửa thành ngày trong quá khứ nếu muốn đóng đăng ký ngay."
+                  >?</span>
+                </Label>
+                <Input
+                  type="date"
+                  value={form.enrollDeadline}
+                  onChange={(e) => setForm(prev => ({ ...prev, enrollDeadline: e.target.value }))}
+                />
+                {form.enrollDeadline && (
+                  <button
+                    type="button"
+                    className="text-[10px] text-muted-foreground hover:text-destructive mt-1"
+                    onClick={() => setForm(prev => ({ ...prev, enrollDeadline: '' }))}
+                  >
+                    ✕ Bỏ giới hạn (tuyển liên tục)
+                  </button>
+                )}
               </div>
             </div>
 

@@ -27,6 +27,7 @@ import { TutorSubjectsPanel } from '@/components/dashboard/tutor-subjects-panel'
 import { TutorScheduleCalendar } from '@/components/dashboard/schedule/tutor-schedule-calendar'
 import { TutorClassManager } from '@/components/dashboard/tutor-class-manager'
 import { StudentClassesPanel } from '@/components/dashboard/student-classes-panel'
+import { StudentScheduleCalendar } from '@/components/dashboard/schedule/student-schedule-calendar'
 
 interface Booking {
   id: string
@@ -122,40 +123,6 @@ const COMPLETENESS_LABELS: Record<string, string> = {
   hasLocation: 'Vị trí',
 }
 
-// ===== Helpers cho lịch tuần (Mục đích 1 — quản lý lớp học) =====
-const DAY_LABELS = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật']
-
-// Buổi học lớp nhóm hiển thị trên lịch tuần hợp nhất (Mục đích 1 — trước đây
-// WeekSchedule chỉ hiện buổi 1-1, lịch lớp nhóm bị tách rời)
-interface GroupSessionEntry {
-  id: string
-  classId: string
-  date: string
-  startTime: string
-  endTime: string
-  status: string
-  title: string
-  subjectName: string
-  counterpartName: string // gia sư (đối với học sinh) / không dùng (đối với gia sư)
-}
-
-// Thứ Hai của tuần cách hiện tại `offset` tuần
-function weekStart(offset: number): Date {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  const dow = d.getDay() // 0 = Chủ nhật
-  const diffToMonday = dow === 0 ? -6 : 1 - dow
-  d.setDate(d.getDate() + diffToMonday + offset * 7)
-  return d
-}
-
-function dateKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 interface ClassGroup {
   key: string
   isSeries: boolean
@@ -197,12 +164,8 @@ export function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [completeness, setCompleteness] = useState<Completeness | null>(null)
   const [reliabilityData, setReliabilityData] = useState<ReliabilityData | null>(null)
-  // Mục đích 1 — lịch tuần: điều hướng giữa các tuần
-  const [weekOffset, setWeekOffset] = useState(0)
   // Lớp học cố định (nhóm): đếm cho thẻ hành động nhanh + badge tab
   const [classStats, setClassStats] = useState<{ open: number; pending: number } | null>(null)
-  // Buổi học lớp nhóm (hợp nhất vào lịch tuần + hiển thị buổi tới)
-  const [groupSessions, setGroupSessions] = useState<GroupSessionEntry[]>([])
 
   // P0-1: dialog hủy lịch kèm lý do
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null)
@@ -229,11 +192,7 @@ export function DashboardPage() {
       user.role === 'TUTOR'
         ? fetch('/api/classes/mine').then(r => r.json()).catch(() => null)
         : Promise.resolve(null),
-      // Học sinh: buổi học lớp nhóm của các lớp đã VÀO LỚP (hợp nhất lịch tuần)
-      user.role === 'STUDENT'
-        ? fetch('/api/enrollments/mine').then(r => r.json()).catch(() => null)
-        : Promise.resolve(null),
-    ]).then(([data, s, rel, clsMine, enrollMine]) => {
+    ]).then(([data, s, rel, clsMine]) => {
       setBookings(data.bookings || [])
       if (s?.stats) setStats(s.stats)
       if (s?.completeness) setCompleteness(s.completeness)
@@ -244,47 +203,6 @@ export function DashboardPage() {
           (sum: number, c: any) => sum + c.enrollments.filter((e: any) => e.status === 'PENDING').length, 0,
         )
         setClassStats({ open, pending })
-        // Trích buổi học lớp nhóm của gia sư (loại buổi đã nghỉ)
-        const sessions: GroupSessionEntry[] = []
-        for (const c of clsMine.classes as any[]) {
-          for (const s2 of c.sessions ?? []) {
-            if (s2.status === 'CANCELLED') continue
-            sessions.push({
-              id: s2.id,
-              classId: c.id,
-              date: s2.date,
-              startTime: s2.startTime,
-              endTime: s2.endTime,
-              status: s2.status,
-              title: c.title,
-              subjectName: c.subject.name,
-              counterpartName: '',
-            })
-          }
-        }
-        setGroupSessions(sessions)
-      }
-      if (enrollMine?.enrollments) {
-        // Chỉ lớp đã APPROVED mới hiện buổi học trên lịch tuần của học sinh
-        const sessions: GroupSessionEntry[] = []
-        for (const e of enrollMine.enrollments as any[]) {
-          if (e.status !== 'APPROVED') continue
-          for (const s2 of e.class.sessions ?? []) {
-            if (s2.status === 'CANCELLED') continue
-            sessions.push({
-              id: s2.id,
-              classId: e.class.id,
-              date: s2.date,
-              startTime: s2.startTime,
-              endTime: s2.endTime,
-              status: s2.status,
-              title: e.class.title,
-              subjectName: e.class.subject.name,
-              counterpartName: e.class.tutor.name,
-            })
-          }
-        }
-        setGroupSessions(sessions)
       }
       setLoading(false)
     })
@@ -630,110 +548,6 @@ export function DashboardPage() {
               </div>
             )}
           </div>
-        </div>
-      </Card>
-    )
-  }
-
-  // ===== Mục đích 1 — Lịch tuần HỢP NHẤT: buổi 1-1 + buổi lớp nhóm trên cùng lưới =====
-  const WeekSchedule = () => {
-    const start = weekStart(weekOffset)
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start)
-      d.setDate(d.getDate() + i)
-      return d
-    })
-    const todayKey = dateKey(new Date())
-    const cells = days.map(d => {
-      const key = dateKey(d)
-      const bSessions = bookings.filter(b =>
-        b.date === key &&
-        (b.status === 'PENDING' || b.status === 'CONFIRMED' || b.status === 'COMPLETED'),
-      )
-      // Buổi lớp nhóm cùng ngày (đã nghỉ không hiển thị)
-      const gSessions = groupSessions.filter(g => g.date === key)
-      return { d, key, bSessions, gSessions }
-    })
-    return (
-      <Card className="p-4 mb-6">
-        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-          <h3 className="font-semibold text-sm flex items-center gap-2">
-            <CalendarCheck className="h-4 w-4 text-primary" /> Lịch tuần
-            <span className="text-[10px] font-normal text-muted-foreground">
-              buổi 1-1 + lớp nhóm
-            </span>
-          </h3>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs font-semibold"
-              onClick={() => navigate({ name: 'dashboard', tab: 'schedule' })}
-            >
-              Lịch đầy đủ
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset(w => w - 1)} aria-label="Tuần trước">
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={weekOffset === 0 ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setWeekOffset(0)}
-            >
-              Tuần này
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset(w => w + 1)} aria-label="Tuần sau">
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-7 gap-1.5">
-          {cells.map(({ d, key, bSessions, gSessions }) => (
-            <div
-              key={key}
-              className={`rounded-lg border p-1.5 min-h-[70px] ${key === todayKey ? 'border-primary bg-primary/5' : ''}`}
-            >
-              <p className="text-[9px] font-medium text-muted-foreground uppercase leading-none">
-                {DAY_LABELS[(d.getDay() + 6) % 7]}
-              </p>
-              <p className={`text-sm font-bold ${key === todayKey ? 'text-primary' : ''}`}>{d.getDate()}</p>
-              <div className="mt-0.5 space-y-0.5">
-                {bSessions.slice(0, 2).map(s => (
-                  <div
-                    key={s.id}
-                    className={`text-[9px] leading-tight px-1 py-0.5 rounded truncate ${
-                      s.status === 'COMPLETED'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : s.status === 'CONFIRMED'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-amber-100 text-amber-700'
-                    }`}
-                    title={`${s.startTime} ${s.subject.name} · ${s[otherParty as 'tutor' | 'student'].name}`}
-                  >
-                    {s.startTime} {s.subject.name}
-                  </div>
-                ))}
-                {/* Buổi lớp nhóm — nền tím để phân biệt buổi 1-1 */}
-                {gSessions.slice(0, 2).map(g => (
-                  <div
-                    key={g.id}
-                    className={`text-[9px] leading-tight px-1 py-0.5 rounded truncate ${
-                      g.status === 'COMPLETED'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-violet-100 text-violet-700'
-                    }`}
-                    title={`${g.startTime} ${g.title} · ${g.subjectName}${g.counterpartName ? ` · ${g.counterpartName}` : ''}`}
-                  >
-                    {g.startTime} {g.title.length > 14 ? g.title.slice(0, 14) + '…' : g.title}
-                  </div>
-                ))}
-                {bSessions.length + gSessions.length > 4 && (
-                  <p className="text-[9px] text-muted-foreground">+{bSessions.length + gSessions.length - 4} buổi</p>
-                )}
-              </div>
-            </div>
-          ))}
         </div>
       </Card>
     )
@@ -1190,8 +1004,7 @@ export function DashboardPage() {
         {/* P0-1: độ tin cậy của gia sư */}
         <ReliabilitySection />
 
-        {/* Mục đích 1 — lịch tuần + lớp học đang dạy */}
-        <WeekSchedule />
+        {/* Mục đích 1 — lớp 1-1 đang dạy (theo nhóm gia sư × môn) */}
         <ClassGroups />
 
         {/* Bookings tabs */}
@@ -1373,8 +1186,8 @@ export function DashboardPage() {
       {/* Lớp học cố định (nhóm) đã đăng ký — hiện khi có ít nhất 1 đăng ký */}
       <StudentClassesPanel />
 
-      {/* Mục đích 1 — lịch tuần + lớp học đang theo học */}
-      <WeekSchedule />
+      {/* Mục đích 1 — lịch học dạng calendar tương tác (tuần/tháng, bấm xem chi tiết) */}
+      <StudentScheduleCalendar />
       <ClassGroups />
 
       {/* Tabs */}

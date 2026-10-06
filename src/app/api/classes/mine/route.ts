@@ -87,6 +87,7 @@ export async function GET(_req: NextRequest) {
         monthlyFee: c.monthlyFee,
         status: c.status,
         startDate: c.startDate,
+        enrollDeadline: c.enrollDeadline,
         schedule: c.schedule.map(s => ({
           id: s.id,
           dayOfWeek: s.dayOfWeek,

@@ -67,13 +67,15 @@ interface WeekViewProps {
   availability: AvailabilitySlot[]
   showAvailability: boolean
   onEventClick: (e: CalEvent) => void
+  /** Nhãn block buổi 1-1: 'student' (gia sư xem) | 'subject' (học sinh tự xem) */
+  oneLabel?: 'student' | 'subject'
 }
 
 /**
  * Lịch tuần dạng lưới giờ — mỗi buổi học là 1 block click được để xem chi tiết.
  * Giờ trống 1-1 hiển thị nền gạch đứt phía sau (bật/tắt được).
  */
-export function WeekView({ days, events, availability, showAvailability, onEventClick }: WeekViewProps) {
+export function WeekView({ days, events, availability, showAvailability, onEventClick, oneLabel = 'student' }: WeekViewProps) {
   const [nowMin, setNowMin] = useState<number>(() =>
     new Date().getHours() * 60 + new Date().getMinutes(),
   )
@@ -216,7 +218,11 @@ export function WeekView({ days, events, availability, showAvailability, onEvent
                         {cancelled && <span className="ml-1 font-semibold">(nghỉ)</span>}
                       </p>
                       <p className={`text-[10px] font-semibold leading-tight ${height >= 64 ? 'line-clamp-2' : 'truncate'} ${cancelled ? 'line-through' : ''}`}>
-                        {ev.kind === 'group' ? ev.cls.title : ev.booking.student.name}
+                        {ev.kind === 'group'
+                          ? ev.cls.title
+                          : oneLabel === 'subject'
+                            ? ev.booking.subject.name
+                            : ev.booking.student.name}
                       </p>
                       {showSub && (
                         <p className="text-[9px] leading-tight truncate opacity-85">

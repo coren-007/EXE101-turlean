@@ -6,10 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider  = "sqlite"
+  provider  = "postgresql"
   url       = env("DATABASE_URL")
-  // Sandbox local: SQLite (để live preview không cần PostgreSQL/Supabase)
-  // Bản production trên GitHub dùng postgresql + DIRECT_URL (Supabase)
+  directUrl = env("DIRECT_URL")
+  // Production: PostgreSQL (Supabase / Neon / Vercel Postgres)
+  // DIRECT_URL cần thiết cho Prisma Migrate khi dùng pooled DATABASE_URL
 }
 
 model User {
@@ -199,6 +200,9 @@ model GroupClass {
   // OPEN = đang tuyển học sinh | PAUSED = tạm dừng tuyển | CLOSED = đã đóng lớp
   status       String   @default("OPEN")
   startDate    String?  // YYYY-MM-DD — ngày khai giảng
+  // YYYY-MM-DD — HẠN CHÓT đăng ký (null = tuyển đến khi đủ sĩ số / đóng lớp).
+  // Quá hạn thì phụ huynh không đăng ký được nữa (API chặn + UI khoá nút).
+  enrollDeadline String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

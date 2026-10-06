@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { notifyStudentsClassSessionReminder } from '@/lib/notify'
 
 const TZ_OFFSET_MS = 7 * 60 * 60 * 1000 // Asia/Ho_Chi_Minh (UTC+7)
 
@@ -126,6 +127,23 @@ export async function GET(req: Request) {
         )
         if (ok) emailsSent++; else emailsSkipped++
       }
+
+      // Nhắc IN-APP (SYSTEM message vào hội thoại tutor↔student) — luôn gửi
+      // bất kể đã cấu hình email hay chưa, để phụ huynh thấy trong hộp tin nhắn
+      await notifyStudentsClassSessionReminder({
+        tutorId: s.class.tutorId,
+        tutorName: s.class.tutor.name,
+        classTitle: s.class.title,
+        subjectName: s.class.subject.name,
+        date: tomorrowStr,
+        time: s.startTime,
+        endTime: s.endTime,
+        address: s.class.meetingType === 'ONLINE' ? 'Học trực tuyến' : s.class.address,
+        students: s.class.enrollments.map(e => ({
+          id: e.studentParentId,
+          name: e.studentName ?? e.studentParent.name,
+        })),
+      }).catch(() => { /* best-effort */ })
     }
 
     return NextResponse.json({
