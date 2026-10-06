@@ -2,6 +2,27 @@
 
 Mọi thay đổi đáng chú ý của dự án GiaSuConnect (Turlean).
 
+## [1.2.0] — 2026-10-04
+
+Quản lý lớp học kiểu hệ thống trường đại học + loại bỏ hệ "giờ bận" (FIXED availability).
+
+### Nổi bật
+
+- **Tab "Lớp học" kiểu trường ĐH**: một nơi duy nhất gom 2 sub-tab —
+  - **Lớp học cố định**: lớp nhóm tại nhà gia sư theo lịch tuần, sĩ số, duyệt đơn (giữ từ 1.1.x)
+  - **Lớp theo lịch dạy (1-1)**: các buổi 1-1 phụ huynh đặt theo giờ trống, **nhóm theo học sinh** như danh sách lớp của giảng viên — mỗi học sinh hiển thị môn học, số buổi đã học/sắp tới, buổi tiếp theo, tổng thu nhập; mở rộng xem từng buổi với thao tác **xác nhận / từ chối / hoàn thành / hủy kèm lý do** ngay tại chỗ + nhắn tin nhanh
+- **Loại bỏ hệ "Giờ bận" (slot FIXED)**: trùng chức năng với Lớp học cố định, gây nhiễu khi gia sư quản lý lịch — toàn bộ schema/API/UI/seed đã dọn sạch, quay về availability đơn giản (chỉ giờ trống)
+- Badge số việc cần xử lý trên từng sub-tab (đơn chờ duyệt / yêu cầu chờ xác nhận)
+- Dialog đặt lịch giữ nguyên chặn giờ trùng lớp cố định + hint trỏ đến mục lớp
+
+### Chi tiết kỹ thuật
+
+- Schema: bỏ `Availability.kind` — migration an toàn (đã xóa 94 slot FIXED trong DB demo trước khi drop cột)
+- API: `POST /api/tutors/me/availability` bỏ `kind`; `GET /api/tutors/[id]` bỏ `fixedSlotsCount`; `POST /api/bookings` xem mọi availability là lịch đặt được (việc chặn trùng giờ lớp nhóm giữ nguyên)
+- Component mới: `tutor-class-manager.tsx` (sub-tabs) + `tutor-1x1-panel.tsx` (quản lý 1-1 theo học sinh)
+- Kiểm chứng: smoke test 28/28 PASS (idempotent), typecheck 0 lỗi, lint 0 lỗi, E2E browser 7 screenshot (sub-tab lớp, expand buổi học, lưới giờ trống sạch, profile, dialog chặn trùng lớp)
+- Lưu ý vận hành: đổi schema xong phải `rm -rf .next` trước khi restart dev (cache Turbopack giữ PrismaClient cũ)
+
 ## [1.1.0] — 2026-10-04
 
 Lịch dạy cố định cho gia sư + sửa lỗi hiển thị lịch trên hồ sơ.
