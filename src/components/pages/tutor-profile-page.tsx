@@ -18,7 +18,7 @@ import { RatingStars } from '@/components/rating-stars'
 import {
   MapPin, Home, School, Star, BadgeCheck, Clock, Briefcase, GraduationCap,
   Phone, Calendar, ArrowLeft, Share2, Heart, MessageSquare, Navigation,
-  CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2
+  CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2, Lock
 } from 'lucide-react'
 import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
@@ -57,7 +57,13 @@ interface TutorDetail {
     dayOfWeek: number
     startTime: string
     endTime: string
+    // FREE = giờ trống nhận lớp mới | FIXED = lịch dạy cố định đã có của gia sư
+    kind?: string
   }[]
+  // Lịch bận theo NGÀY CỤ THỂ (booking PENDING/CONFIRMED tương lai)
+  // → dialog đặt lịch vô hiệu hóa đúng giờ đã có người đặt
+  busySlots?: { date: string; startTime: string; endTime: string }[]
+  fixedSlotsCount?: number
   avgRating: number
   reviewCount: number
   // P0-1: điểm tin cậy công khai
@@ -81,15 +87,16 @@ interface TutorDetail {
 const DAY_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
 
 // Generate time slots from tutor's availability (15-min increments)
+// Chỉ slot FREE (giờ trống) — slot FIXED là lịch dạy cố định, không sinh lựa chọn
 function generateSlotsFromAvailability(
-  availabilities: { dayOfWeek: number; startTime: string; endTime: string }[],
+  availabilities: { dayOfWeek: number; startTime: string; endTime: string; kind?: string }[],
   selectedDate: string
 ): string[] {
   if (!selectedDate) return []
   const date = new Date(selectedDate)
   const dayOfWeek = date.getDay()
 
-  const daySlots = availabilities.filter(a => a.dayOfWeek === dayOfWeek)
+  const daySlots = availabilities.filter(a => a.dayOfWeek === dayOfWeek && a.kind !== 'FIXED')
   if (daySlots.length === 0) return []
 
   const slots: string[] = []
@@ -112,13 +119,13 @@ function generateSlotsFromAvailability(
 }
 
 function isDateAvailable(
-  availabilities: { dayOfWeek: number; startTime: string; endTime: string }[],
+  availabilities: { dayOfWeek: number; kind?: string }[],
   dateStr: string
 ): boolean {
   if (!dateStr) return false
   const date = new Date(dateStr)
   const dayOfWeek = date.getDay()
-  return availabilities.some(a => a.dayOfWeek === dayOfWeek)
+  return availabilities.some(a => a.dayOfWeek === dayOfWeek && a.kind !== 'FIXED')
 }
 
 // Cộng n tuần vào YYYY-MM-DD (dùng cho hiển thị buổi cuối của khóa)
@@ -333,7 +340,30 @@ export function TutorProfilePage({ id }: { id: string }) {
   const today = new Date().toISOString().split('T')[0]
 
   // Compute available slots from tutor's availability for selected date
+  // (chỉ từ slot FREE — lịch cố định không sinh lựa chọn)
   const availableSlots = tutor ? generateSlotsFromAvailability(tutor.availabilities, bookingDate) : []
+
+  // ===== Lịch bận theo ngày cụ thể (booking đã có trên nền tảng) =====
+  // Vô hiệu hóa đúng giờ đã có người đặt — phụ huynh nhìn thấy ngay,
+  // không phải chờ server từ chối lúc gửi.
+  const busySlotsOfDate = (tutor.busySlots || []).filter(b => b.date === bookingDate)
+  const toMin = (t: string) => {
+    const [h, m] = t.split(':').map(Number)
+    return h * 60 + m
+  }
+  const isSlotBusy = (t: string) => {
+    const start = toMin(t)
+    const end = start + duration * 60 // cả buổi học phải không trùng lớp đã có
+    return busySlotsOfDate.some(b => start < toMin(b.endTime) && end > toMin(b.startTime))
+  }
+  const busyCount = availableSlots.filter(isSlotBusy).length
+
+  // Lịch dạy cố định của ngày đang chọn (để gợi ý vì sao thiếu giờ)
+  const fixedOfDay = bookingDate
+    ? tutor.availabilities.filter(
+        a => a.dayOfWeek === new Date(bookingDate).getDay() && a.kind === 'FIXED',
+      )
+    : []
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-6">
@@ -549,28 +579,69 @@ export function TutorProfilePage({ id }: { id: string }) {
             </div>
           </Card>
 
-          {/* Availability */}
+          {/* Lịch dạy hàng tuần — hiển thị ĐẦY ĐỪ mọi khung giờ mỗi ngày:
+              giờ trống (nhận lớp mới) + lịch dạy cố định gia sư đã có (đã có lớp) */}
           <Card className="p-6">
-            <h2 className="font-semibold text-lg mb-3">Lịch trống</h2>
-            <div className="grid grid-cols-7 gap-1.5">
-              {DAY_NAMES.map((day, idx) => {
-                const slots = tutor.availabilities.filter(a => a.dayOfWeek === idx)
+            <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+              <h2 className="font-semibold text-lg">Lịch dạy hàng tuần</h2>
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-primary inline-block" /> Nhận lớp mới
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-amber-500 inline-block" /> Đã có lớp cố định
+                </span>
+              </div>
+            </div>
+            {/* Thứ 2 → Chủ nhật, mỗi ngày liệt kê TẤT CẢ khung giờ (fix: trước đây
+                chỉ hiện khung đầu tiên trong ngày) */}
+            <div className="space-y-1">
+              {[1, 2, 3, 4, 5, 6, 0].map(idx => {
+                const daySlots = tutor.availabilities
+                  .filter(a => a.dayOfWeek === idx)
+                  .sort((a, b) => a.startTime.localeCompare(b.startTime))
                 return (
-                  <div key={day} className={`rounded-lg p-2 text-center ${slots.length > 0 ? 'bg-primary/5 border border-primary/20' : 'bg-muted/30 border border-transparent'}`}>
-                    <p className={`text-[10px] font-semibold ${slots.length > 0 ? 'text-primary' : 'text-muted-foreground'}`}>
-                      {day === 'Chủ nhật' ? 'CN' : day.replace('Thứ ', 'T')}
-                    </p>
-                    {slots.length > 0 ? (
-                      <p className="text-[9px] text-muted-foreground mt-0.5">{slots[0].startTime}</p>
-                    ) : (
-                      <p className="text-[9px] text-muted-foreground/50 mt-0.5">—</p>
-                    )}
+                  <div
+                    key={idx}
+                    className={`grid grid-cols-[76px_1fr] items-center gap-3 py-2 border-b last:border-b-0 ${
+                      daySlots.length > 0 ? '' : 'opacity-50'
+                    }`}
+                  >
+                    <span className={`text-sm font-semibold ${idx === new Date().getDay() ? 'text-primary' : ''}`}>
+                      {idx === 0 ? 'Chủ nhật' : `Thứ ${idx + 1}`}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {daySlots.length > 0 ? daySlots.map(s => (
+                        <span
+                          key={s.id}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            s.kind === 'FIXED'
+                              ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                              : 'bg-primary/10 text-primary border border-primary/20'
+                          }`}
+                          title={s.kind === 'FIXED'
+                            ? 'Gia sư đã có lớp cố định trong khung giờ này — không thể đặt'
+                            : 'Khung giờ trống — có thể đặt lịch'}
+                        >
+                          {s.kind === 'FIXED' && <Lock className="h-3 w-3 shrink-0" />}
+                          {s.startTime}–{s.endTime}
+                          {s.kind === 'FIXED' ? <span className="font-medium">· đã có lớp</span> : null}
+                        </span>
+                      )) : (
+                        <span className="text-xs text-muted-foreground">Không có lịch</span>
+                      )}
+                    </div>
                   </div>
                 )
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              * Lịch có thể thay đổi, vui lòng đặt lịch để gia sư xác nhận.
+              * Chỉ đặt được lịch trong khung <span className="font-medium text-primary">Nhận lớp mới</span>.
+              {(tutor.fixedSlotsCount ?? 0) > 0 && (
+                <> Gia sư đang dạy các lớp cố định theo lịch đánh dấu{" "}
+                <span className="font-medium text-amber-600">Đã có lớp cố định</span>.</>
+              )}
+              Lịch có thể thay đổi, vui lòng đặt lịch để gia sư xác nhận.
             </p>
           </Card>
 
@@ -787,7 +858,9 @@ export function TutorProfilePage({ id }: { id: string }) {
                 {bookingDate && tutor.availabilities.length > 0 && !isDateAvailable(tutor.availabilities, bookingDate) && (
                   <p className="text-[11px] text-amber-600 mt-1 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
-                    Gia sư không có lịch trống ngày này. Chọn ngày khác.
+                    {fixedOfDay.length > 0
+                      ? 'Ngày này gia sư chỉ còn lịch dạy cố định. Chọn ngày khác.'
+                      : 'Gia sư không có lịch trống ngày này. Chọn ngày khác.'}
                   </p>
                 )}
                 {bookingDate && isDateAvailable(tutor.availabilities, bookingDate) && (
@@ -834,24 +907,45 @@ export function TutorProfilePage({ id }: { id: string }) {
                 <>
                   {availableSlots.length > 0 ? (
                     <div className="grid grid-cols-4 gap-2">
-                      {availableSlots.map(t => (
-                        <button
-                          key={t}
-                          onClick={() => setBookingTime(t)}
-                          className={`py-2 rounded-lg text-sm font-medium border transition-colors ${
-                            bookingTime === t
-                              ? 'bg-primary text-primary-foreground border-primary'
-                              : 'border-border hover:border-primary/30'
-                          }`}
-                        >
-                          {t}
-                        </button>
-                      ))}
+                      {availableSlots.map(t => {
+                        const busy = isSlotBusy(t)
+                        return (
+                          <button
+                            key={t}
+                            onClick={() => !busy && setBookingTime(t)}
+                            disabled={busy}
+                            className={`py-2 rounded-lg text-sm font-medium border transition-colors relative ${
+                              busy
+                                ? 'bg-muted/50 border-border text-muted-foreground/60 line-through cursor-not-allowed'
+                                : bookingTime === t
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'border-border hover:border-primary/30'
+                            }`}
+                            title={busy ? 'Khung giờ này đã có lớp — chọn giờ khác' : `Buổi học ${t} + ${duration}h`}
+                          >
+                            {t}
+                          </button>
+                        )
+                      })}
                     </div>
                   ) : (
                     <div className="rounded-lg border-2 border-dashed p-4 text-center text-xs text-muted-foreground">
-                      Gia sư không có lịch trống ngày này. Chọn ngày khác.
+                      {fixedOfDay.length > 0
+                        ? 'Gia sư đã có lịch dạy cố định trọn ngày này. Chọn ngày khác.'
+                        : 'Gia sư không có lịch trống ngày này. Chọn ngày khác.'}
                     </div>
+                  )}
+                  {busyCount > 0 && (
+                    <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1">
+                      <Lock className="h-3 w-3" />
+                      {busyCount} khung giờ đã có lớp — đã vô hiệu hóa, vui lòng chọn giờ còn lại.
+                    </p>
+                  )}
+                  {fixedOfDay.length > 0 && availableSlots.length > 0 && (
+                    <p className="text-[11px] text-amber-600/90 mt-1.5 flex items-center gap-1">
+                      <Lock className="h-3 w-3" />
+                      Gia sư có lịch dạy cố định ngày này: {fixedOfDay.map(f => `${f.startTime}–${f.endTime}`).join(', ')}.
+                    </p>
                   )}
                 </>
               )}

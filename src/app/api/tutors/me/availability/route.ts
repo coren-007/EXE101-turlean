@@ -16,12 +16,13 @@ export async function GET() {
 }
 
 // POST - add a new availability slot
+// kind: FREE (giờ trống nhận lớp mới — mặc định) | FIXED (lịch dạy cố định đã có)
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
   if (user.role !== 'TUTOR') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const { dayOfWeek, startTime, endTime } = await req.json()
+  const { dayOfWeek, startTime, endTime, kind } = await req.json()
   if (dayOfWeek == null || dayOfWeek < 0 || dayOfWeek > 6) {
     return NextResponse.json({ error: 'Ngày không hợp lệ' }, { status: 400 })
   }
@@ -31,17 +32,19 @@ export async function POST(req: NextRequest) {
   if (startTime >= endTime) {
     return NextResponse.json({ error: 'Giờ bắt đầu phải trước giờ kết thúc' }, { status: 400 })
   }
+  const slotKind = kind === 'FIXED' ? 'FIXED' : 'FREE'
 
-  // Check overlap with existing slots
+  // Check overlap with existing slots (cả FREE lẫn FIXED — cùng 1 ngày không chồng lấn)
   const existing = await db.availability.findMany({ where: { tutorId: user.id, dayOfWeek } })
   for (const slot of existing) {
     if (startTime < slot.endTime && endTime > slot.startTime) {
-      return NextResponse.json({ error: 'Trùng lịch với slot đã có' }, { status: 400 })
+      const label = slot.kind === 'FIXED' ? 'lịch dạy cố định' : 'khung giờ'
+      return NextResponse.json({ error: `Trùng ${label} đã có (${slot.startTime}–${slot.endTime})` }, { status: 400 })
     }
   }
 
   const slot = await db.availability.create({
-    data: { tutorId: user.id, dayOfWeek, startTime, endTime },
+    data: { tutorId: user.id, dayOfWeek, startTime, endTime, kind: slotKind },
   })
   return NextResponse.json(slot)
 }

@@ -141,12 +141,24 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate time is within tutor's availability
+  // Chỉ slot FREE (giờ trống nhận lớp mới) tính là lịch đặt được;
+  // slot FIXED (lịch dạy cố định đã có) KHÔNG nhận thêm lớp vào khung đó.
   const dayOfWeek = new Date(`${date}T00:00`).getDay()
   const availabilities = await db.availability.findMany({
-    where: { tutorId, dayOfWeek },
+    where: { tutorId, dayOfWeek, kind: 'FREE' },
   })
   if (availabilities.length === 0) {
-    return NextResponse.json({ error: 'Gia sư không có lịch trống vào ngày này' }, { status: 400 })
+    const hasFixed = await db.availability.findFirst({
+      where: { tutorId, dayOfWeek, kind: 'FIXED' },
+    })
+    return NextResponse.json(
+      {
+        error: hasFixed
+          ? 'Gia sư đã có lịch dạy cố định vào ngày này. Vui lòng chọn khung giờ khác.'
+          : 'Gia sư không có lịch trống vào ngày này',
+      },
+      { status: 400 },
+    )
   }
   const startOk = availabilities.some(a => startMin >= toMinutes(a.startTime) && startMin < toMinutes(a.endTime))
   const endOk = availabilities.some(a => endMin <= toMinutes(a.endTime) && endMin > toMinutes(a.startTime))

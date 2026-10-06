@@ -181,6 +181,8 @@ export function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [completeness, setCompleteness] = useState<Completeness | null>(null)
   const [reliabilityData, setReliabilityData] = useState<ReliabilityData | null>(null)
+  // Lịch dạy cố định (slot FIXED) — overlay lên lịch tuần của gia sư
+  const [fixedSlots, setFixedSlots] = useState<{ dayOfWeek: number; startTime: string; endTime: string; kind?: string }[]>([])
   // Mục đích 1 — lịch tuần: điều hướng giữa các tuần
   const [weekOffset, setWeekOffset] = useState(0)
 
@@ -204,11 +206,16 @@ export function DashboardPage() {
         : Promise.resolve(null),
       // P0-1: điểm tin cậy & lịch sử vi phạm của chính mình
       fetch('/api/users/me/violations').then(r => r.json()).catch(() => null),
-    ]).then(([data, s, rel]) => {
+      // Lịch dạy cố định — chỉ gia sư có (overlay lịch tuần)
+      user.role === 'TUTOR'
+        ? fetch('/api/tutors/me/availability').then(r => r.json()).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([data, s, rel, avail]) => {
       setBookings(data.bookings || [])
       if (s?.stats) setStats(s.stats)
       if (s?.completeness) setCompleteness(s.completeness)
       if (rel?.reliability) setReliabilityData(rel)
+      if (avail?.availability) setFixedSlots(avail.availability.filter((a: any) => a.kind === 'FIXED'))
       setLoading(false)
     })
   }, [user])
@@ -573,13 +580,20 @@ export function DashboardPage() {
         b.date === key &&
         (b.status === 'PENDING' || b.status === 'CONFIRMED' || b.status === 'COMPLETED'),
       )
-      return { d, key, sessions }
+      // Lịch dạy cố định rơi vào thứ này trong tuần (chỉ gia sư)
+      const fixed = fixedSlots.filter(f => f.dayOfWeek === d.getDay())
+      return { d, key, sessions, fixed }
     })
     return (
       <Card className="p-4 mb-6">
         <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <CalendarCheck className="h-4 w-4 text-primary" /> Lịch tuần
+            {fixedSlots.length > 0 && (
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                {fixedSlots.length} khung cố định/tuần
+              </span>
+            )}
           </h3>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset(w => w - 1)} aria-label="Tuần trước">
@@ -599,7 +613,7 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="grid grid-cols-7 gap-1.5">
-          {cells.map(({ d, key, sessions }) => (
+          {cells.map(({ d, key, sessions, fixed }) => (
             <div
               key={key}
               className={`rounded-lg border p-1.5 min-h-[70px] ${key === todayKey ? 'border-primary bg-primary/5' : ''}`}
@@ -609,6 +623,15 @@ export function DashboardPage() {
               </p>
               <p className={`text-sm font-bold ${key === todayKey ? 'text-primary' : ''}`}>{d.getDate()}</p>
               <div className="mt-0.5 space-y-0.5">
+                {fixed.map(f => (
+                  <div
+                    key={`fix-${f.dayOfWeek}-${f.startTime}`}
+                    className="text-[9px] leading-tight px-1 py-0.5 rounded truncate bg-amber-50 text-amber-700 border border-amber-200"
+                    title={`Lịch dạy cố định ${f.startTime}–${f.endTime} — không nhận lớp thêm`}
+                  >
+                    {f.startTime} Lớp cố định
+                  </div>
+                ))}
                 {sessions.slice(0, 2).map(s => (
                   <div
                     key={s.id}
