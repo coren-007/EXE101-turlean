@@ -3,7 +3,7 @@ import { create } from 'zustand'
 export type View =
   | { name: 'home' }
   | { name: 'search'; subject?: string; mode?: string; lat?: number; lng?: number; district?: string }
-  | { name: 'tutor'; id: string }
+  | { name: 'tutor'; id: string; classId?: string }
   | { name: 'login' }
   | { name: 'register' }
   | { name: 'dashboard'; tab?: 'overview' | 'subjects' | 'schedule' | 'classes' }
@@ -45,7 +45,9 @@ function parseInitialView(): View {
       lng: params.get('lng') ? Number(params.get('lng')) : undefined,
     }
   }
-  if (v === 'tutor' && params.get('id')) return { name: 'tutor', id: params.get('id')! }
+  if (v === 'tutor' && params.get('id')) {
+    return { name: 'tutor', id: params.get('id')!, classId: params.get('class') || undefined }
+  }
   if (v === 'login') return { name: 'login' }
   if (v === 'register') return { name: 'register' }
   if (v === 'dashboard') {
@@ -75,6 +77,7 @@ function updateUrl(view: View) {
   } else if (view.name === 'tutor') {
     params.set('view', 'tutor')
     params.set('id', view.id)
+    if (view.classId) params.set('class', view.classId)
   } else if (view.name === 'dashboard') {
     params.set('view', 'dashboard')
     if (view.tab && view.tab !== 'overview') params.set('tab', view.tab)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useApp } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -20,7 +20,7 @@ import {
   MapPin, Home, School, Star, BadgeCheck, Clock, Briefcase, GraduationCap,
   Phone, Calendar, ArrowLeft, Share2, Heart, MessageSquare, Navigation,
   CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2, Lock,
-  Users, PencilLine
+  Users, PencilLine, CalendarClock, Hourglass
 } from 'lucide-react'
 import { formatVnd, formatDate, timeAgo, formatClassSchedule, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -102,7 +102,11 @@ interface ClassInfo {
   schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
   enrolledCount: number
   pendingCount: number
+  waitlistCount?: number
+  nextSession?: { date: string; startTime: string; endTime: string } | null
+  upcomingCount?: number
   myEnrollment?: { id: string; status: string } | null
+  myWaitlistPosition?: number | null
 }
 
 // Generate time slots from tutor's availability (15-min increments)
@@ -157,7 +161,7 @@ function addWeeksLocal(dateStr: string, weeks: number): string {
 }
 
 export function TutorProfilePage({ id }: { id: string }) {
-  const { navigate, user } = useApp()
+  const { navigate, user, view } = useApp()
   const [tutor, setTutor] = useState<TutorDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [bookingOpen, setBookingOpen] = useState(false)
@@ -167,6 +171,8 @@ export function TutorProfilePage({ id }: { id: string }) {
   const [enrollStudentName, setEnrollStudentName] = useState('')
   const [enrollNote, setEnrollNote] = useState('')
   const [submittingEnroll, setSubmittingEnroll] = useState(false)
+  // Tự mở dialog đăng ký khi vào từ tab "Lớp học" của trang tìm kiếm (view.classId)
+  const autoOpenedClassId = useRef<string | null>(null)
 
   // Booking form state
   const [selectedSubject, setSelectedSubject] = useState<string>('')
@@ -227,6 +233,7 @@ export function TutorProfilePage({ id }: { id: string }) {
   useEffect(() => {
      
     setLoading(true)
+    autoOpenedClassId.current = null
     Promise.all([
       fetch(`/api/tutors/${id}`).then(r => r.json()),
       fetch(`/api/classes?tutorId=${id}`).then(r => r.json()).catch(() => ({ classes: [] })),
@@ -234,11 +241,22 @@ export function TutorProfilePage({ id }: { id: string }) {
       .then(([data, clsData]) => {
         setTutor(data)
         if (data.subjects?.[0]) setSelectedSubject(data.subjects[0].id)
-        setClasses(clsData.classes || [])
+        const clsList: ClassInfo[] = clsData.classes || []
+        setClasses(clsList)
         setLoading(false)
+        // Đến từ tìm kiếm lớp học → tự mở dialog đăng ký đúng lớp đó
+        const targetId = view.name === 'tutor' ? view.classId : undefined
+        if (targetId && user?.role === 'STUDENT' && autoOpenedClassId.current !== targetId) {
+          const target = clsList.find(c => c.id === targetId)
+          if (target) {
+            autoOpenedClassId.current = targetId
+            // Trì hoãn 1 tick để toast/navigation ổn định
+            setTimeout(() => openEnrollDialog(target), 150)
+          }
+        }
       })
       .catch(() => setLoading(false))
-  }, [id])
+  }, [id, view.name === 'tutor' ? view.classId : undefined])
 
   // Làm mới danh sách lớp (sau khi đăng ký / rút đăng ký đổi trạng thái)
   const reloadClasses = () => {
@@ -689,6 +707,15 @@ export function TutorProfilePage({ id }: { id: string }) {
                             {cls.gradeLevel ? ` · ${cls.gradeLevel}` : ''} ·{' '}
                             {cls.meetingType === 'ONLINE' ? 'Học trực tuyến' : 'Học tại nhà gia sư'}
                           </p>
+                          {cls.nextSession && (
+                            <p className="text-xs text-primary font-medium mt-1.5 flex items-center gap-1.5">
+                              <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                              Buổi tới: {formatDate(cls.nextSession.date)} · {cls.nextSession.startTime}–{cls.nextSession.endTime}
+                              <span className="text-muted-foreground font-normal">
+                                (lịch đã có sẵn {(cls.upcomingCount ?? 0)} buổi tới)
+                              </span>
+                            </p>
+                          )}
                         </div>
                         {cls.monthlyFee != null && (
                           <div className="text-right shrink-0">
@@ -737,13 +764,19 @@ export function TutorProfilePage({ id }: { id: string }) {
                           </span>
                           <span className={full ? 'text-rose-600 font-semibold' : 'text-muted-foreground'}>
                             {enrolled}/{cls.capacity} học sinh
-                            {!full ? ` · còn ${remaining} chỗ` : ' · đã đủ'}
+                            {!full ? ` · còn ${remaining} chỗ` : (cls.waitlistCount ?? 0) > 0 ? ` · ${cls.waitlistCount} đang chờ chỗ` : ' · đã đủ'}
                           </span>
                         </div>
                         <Progress value={pct} className="h-2" />
                         {cls.pendingCount > 0 && !full && (
                           <p className="text-[10px] text-muted-foreground mt-1">
                             +{cls.pendingCount} đăng ký đang chờ gia sư duyệt
+                          </p>
+                        )}
+                        {full && (cls.waitlistCount ?? 0) > 0 && (
+                          <p className="text-[10px] text-violet-600 mt-1 flex items-center gap-1">
+                            <Hourglass className="h-3 w-3" />
+                            Đăng ký mới vào danh sách chờ — tự động vào lớp khi có chỗ trống
                           </p>
                         )}
                       </div>
@@ -770,23 +803,29 @@ export function TutorProfilePage({ id }: { id: string }) {
                                 <CheckCircle2 className="h-3 w-3" /> Bạn đã ở trong lớp này
                               </Badge>
                             )}
+                            {my.status === 'WAITLIST' && (
+                              <Badge className="bg-violet-100 text-violet-700 border-0 gap-1">
+                                <Hourglass className="h-3 w-3" />
+                                Đang chờ chỗ — vị trí #{cls.myWaitlistPosition ?? '?'}
+                              </Badge>
+                            )}
                             {my.status === 'REJECTED' && (
                               <Badge className="bg-rose-100 text-rose-700 border-0 gap-1">
                                 <X className="h-3 w-3" /> Đăng ký chưa được nhận
                               </Badge>
                             )}
-                            {(my.status === 'PENDING' || my.status === 'APPROVED') && (
+                            {(my.status === 'PENDING' || my.status === 'APPROVED' || my.status === 'WAITLIST') && (
                               <Button
                                 size="sm"
                                 variant="ghost"
                                 className="text-destructive hover:text-destructive"
                                 onClick={() => handleCancelEnrollment(cls)}
                               >
-                                {my.status === 'APPROVED' ? 'Rời lớp' : 'Rút đăng ký'}
+                                {my.status === 'APPROVED' ? 'Rời lớp' : my.status === 'WAITLIST' ? 'Rút khỏi chờ' : 'Rút đăng ký'}
                               </Button>
                             )}
                             {(my.status === 'REJECTED' || my.status === 'CANCELLED') &&
-                              !full && cls.status === 'OPEN' && (
+                              cls.status === 'OPEN' && (
                               <Button size="sm" variant="outline" onClick={() => openEnrollDialog(cls)}>
                                 Đăng ký lại
                               </Button>
@@ -805,10 +844,10 @@ export function TutorProfilePage({ id }: { id: string }) {
                         ) : user.role === 'TUTOR' ? null : (
                           <Button
                             size="sm"
-                            disabled={full || isPaused}
+                            disabled={isPaused}
                             onClick={() => openEnrollDialog(cls)}
                           >
-                            {full ? 'Lớp đã đủ sĩ số' : isPaused ? 'Tạm dừng tuyển sinh' : 'Đăng ký lớp học'}
+                            {isPaused ? 'Tạm dừng tuyển sinh' : full ? 'Vào danh sách chờ' : 'Đăng ký lớp học'}
                           </Button>
                         )}
                       </div>

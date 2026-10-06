@@ -13,6 +13,7 @@ import {
 import {
   GraduationCap, MapPin, Users, Clock, CalendarDays, Wallet, Video,
   Home as HomeIcon, UserCheck, Clock3, XCircle, ExternalLink, MessageSquare, Ban,
+  CalendarClock, ClipboardCheck, Hourglass, CheckCircle2, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { formatVnd, formatDate, CLASS_DAY_NAMES, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -20,6 +21,7 @@ import { toast } from 'sonner'
 const ENROLL_STATUS: Record<string, { label: string; cls: string; icon: any }> = {
   PENDING: { label: 'Chờ gia sư duyệt', cls: 'bg-amber-100 text-amber-700', icon: Clock3 },
   APPROVED: { label: 'Đã vào lớp', cls: 'bg-emerald-100 text-emerald-700', icon: UserCheck },
+  WAITLIST: { label: 'Đang chờ chỗ trống', cls: 'bg-violet-100 text-violet-700', icon: Hourglass },
   REJECTED: { label: 'Không được duyệt', cls: 'bg-rose-100 text-rose-700', icon: XCircle },
   CANCELLED: { label: 'Đã rút', cls: 'bg-muted text-muted-foreground', icon: XCircle },
 }
@@ -30,12 +32,29 @@ interface Slot {
   endTime: string
 }
 
+interface UpcomingSession {
+  id: string
+  date: string
+  startTime: string
+  endTime: string
+}
+
+interface AttendanceRecord {
+  id: string
+  date: string
+  startTime: string
+  endTime: string
+  status: string | null // PRESENT | ABSENT | null
+  sessionNote?: string | null
+}
+
 interface MyEnrollment {
   id: string
   status: string
   studentName: string | null
   note: string | null
   createdAt: string
+  myWaitlistPosition?: number | null
   class: {
     id: string
     title: string
@@ -49,6 +68,10 @@ interface MyEnrollment {
     startDate: string | null
     schedule: Slot[]
     enrolledCount: number
+    waitlistCount?: number
+    nextSession?: UpcomingSession | null
+    upcomingSessions?: UpcomingSession[]
+    cancelledRecent?: { id: string; date: string; startTime: string; note?: string | null }[]
     tutor: {
       id: string
       name: string
@@ -60,11 +83,18 @@ interface MyEnrollment {
       isVerified?: boolean
     }
   }
+  attendance?: {
+    present: number
+    absent: number
+    total: number
+    history: AttendanceRecord[]
+  }
 }
 
 /**
  * "Lớp học nhóm đã đăng ký" — hiển thị trong dashboard phụ huynh/học sinh:
- * các lớp học cố định họ đã gửi đăng ký (chờ duyệt / đã vào lớp / bị từ chối).
+ * các lớp học cố định họ đã gửi đăng ký (chờ duyệt / đã vào lớp / đang chờ chỗ),
+ * kèm CHUYÊN CẦN (đã học bao nhiêu buổi, vắng bao nhiêu) và buổi học tới.
  */
 export function StudentClassesPanel() {
   const { user, navigate } = useApp()
@@ -72,6 +102,7 @@ export function StudentClassesPanel() {
   const [loaded, setLoaded] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<MyEnrollment | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [expandedAttendance, setExpandedAttendance] = useState<string | null>(null)
 
   const load = async () => {
     try {
@@ -112,11 +143,18 @@ export function StudentClassesPanel() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Rút đăng ký thất bại')
-      toast.success(
-        cancelTarget.status === 'APPROVED'
-          ? `Đã rời lớp "${cancelTarget.class.title}" — gia sư sẽ được thông báo`
-          : `Đã rút đăng ký khỏi lớp "${cancelTarget.class.title}"`,
-      )
+      let msg: string
+      if (cancelTarget.status === 'APPROVED') {
+        msg = `Đã rời lớp "${cancelTarget.class.title}" — gia sư sẽ được thông báo`
+      } else if (cancelTarget.status === 'WAITLIST') {
+        msg = `Đã rút khỏi danh sách chờ của lớp "${cancelTarget.class.title}"`
+      } else {
+        msg = `Đã rút đăng ký khỏi lớp "${cancelTarget.class.title}"`
+      }
+      if (data.promotedFromWaitlist?.length > 0) {
+        msg += `. Chỗ trống được chuyển cho học sinh chờ tiếp theo.`
+      }
+      toast.success(msg, { duration: 5000 })
       setCancelTarget(null)
       load()
     } catch (e: any) {
@@ -130,7 +168,7 @@ export function StudentClassesPanel() {
     return null // chưa đăng ký lớp nào → ẩn gọn dashboard
   }
 
-  const active = enrollments.filter(e => e.status === 'PENDING' || e.status === 'APPROVED')
+  const active = enrollments.filter(e => ['PENDING', 'APPROVED', 'WAITLIST'].includes(e.status))
   const past = enrollments.filter(e => e.status === 'REJECTED' || e.status === 'CANCELLED')
 
   const renderCard = (e: MyEnrollment) => {
@@ -139,6 +177,7 @@ export function StudentClassesPanel() {
     const cls = e.class
     const remaining = cls.capacity - cls.enrolledCount
     const pct = Math.min(100, Math.round((cls.enrolledCount / cls.capacity) * 100))
+    const attOpen = expandedAttendance === e.id
     return (
       <Card key={e.id} className="p-4">
         <div className="flex items-start gap-3">
@@ -181,17 +220,46 @@ export function StudentClassesPanel() {
                     : <><HomeIcon className="h-3.5 w-3.5" /> Tại nhà gia sư</>}
                   {cls.address ? ` · ${cls.address}` : ''}
                 </span>
-                {cls.startDate && (
-                  <span className="inline-flex items-center gap-1">
-                    <CalendarDays className="h-3.5 w-3.5" /> Khai giảng {formatDate(cls.startDate)}
-                  </span>
-                )}
                 {cls.monthlyFee != null && (
                   <span className="inline-flex items-center gap-1">
                     <Wallet className="h-3.5 w-3.5" /> {formatVnd(cls.monthlyFee)}/tháng
                   </span>
                 )}
               </div>
+
+              {/* Buổi học tới — học sinh đã vào lớp */}
+              {e.status === 'APPROVED' && cls.nextSession && (
+                <p className="flex items-center gap-1.5 bg-primary/5 border border-primary/15 rounded-lg px-2.5 py-1.5">
+                  <CalendarClock className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span>
+                    Buổi tới: <b className="text-foreground">{formatDate(cls.nextSession.date)}</b>{' '}
+                    {cls.nextSession.startTime}–{cls.nextSession.endTime}
+                  </span>
+                </p>
+              )}
+
+              {/* Thông báo buổi đã bị dời / nghỉ gần đây */}
+              {e.status === 'APPROVED' && (cls.cancelledRecent?.length ?? 0) > 0 && (
+                <p className="flex items-start gap-1.5 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5">
+                  <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0 mt-0.5" />
+                  <span>
+                    Buổi {formatDate(cls.cancelledRecent![0].date)} đã nghỉ
+                    {cls.cancelledRecent![0].note ? ` — ${cls.cancelledRecent![0].note}` : ''}
+                    {cls.cancelledRecent!.length > 1 ? ` (+${cls.cancelledRecent!.length - 1} buổi khác)` : ''}
+                  </span>
+                </p>
+              )}
+
+              {/* Danh sách chờ: vị trí */}
+              {e.status === 'WAITLIST' && (
+                <p className="flex items-center gap-1.5 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5">
+                  <Hourglass className="h-3.5 w-3.5 text-violet-600 shrink-0" />
+                  <span>
+                    Vị trí <b className="text-violet-700">#{e.myWaitlistPosition ?? cls.waitlistCount ?? '?'}</b> trong
+                    danh sách chờ — tự động vào lớp khi có chỗ trống (kèm thông báo).
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Sĩ số lớp — phụ huynh nắm rõ lớp còn chỗ hay đã đầy */}
@@ -202,10 +270,64 @@ export function StudentClassesPanel() {
                 </span>
                 <span className={remaining === 0 ? 'text-rose-600 font-semibold' : 'text-muted-foreground'}>
                   {cls.enrolledCount}/{cls.capacity} học sinh{remaining > 0 ? ` · còn ${remaining} chỗ` : ' · đã đủ'}
+                  {(cls.waitlistCount ?? 0) > 0 ? ` · ${cls.waitlistCount} chờ chỗ` : ''}
                 </span>
               </div>
               <Progress value={pct} className="h-1.5" />
             </div>
+
+            {/* Chuyên cần — chỉ khi đã vào lớp và có dữ liệu điểm danh */}
+            {e.status === 'APPROVED' && e.attendance && e.attendance.total > 0 && (
+              <div className="mt-2.5">
+                <div className="flex items-center justify-between text-[11px] mb-1">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <ClipboardCheck className="h-3 w-3" /> Chuyên cần của{' '}
+                    {e.studentName && e.studentName !== user.name ? e.studentName : 'bạn'}
+                  </span>
+                  <span className="text-muted-foreground">
+                    <b className="text-emerald-600">{e.attendance.present} có mặt</b>
+                    {e.attendance.absent > 0 && <b className="text-rose-600"> · {e.attendance.absent} vắng</b>}
+                    <span> / {e.attendance.total} buổi</span>
+                  </span>
+                </div>
+                <Progress
+                  value={Math.round((e.attendance.present / e.attendance.total) * 100)}
+                  className="h-1.5"
+                />
+                {e.attendance.history.length > 0 && (
+                  <button
+                    className="text-[11px] text-primary hover:underline mt-1.5 inline-flex items-center gap-1"
+                    onClick={() => setExpandedAttendance(attOpen ? null : e.id)}
+                  >
+                    {attOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    {attOpen ? 'Thu gọn' : `Xem ${e.attendance.history.length} buổi đã học`}
+                  </button>
+                )}
+                {attOpen && (
+                  <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto scroll-area pr-1">
+                    {e.attendance.history.map(a => (
+                      <div key={a.id} className="flex items-center justify-between gap-2 text-[11px] px-2 py-1 rounded-lg bg-muted/40">
+                        <span className="text-muted-foreground truncate">
+                          {formatDate(a.date)} · {a.startTime}
+                          {a.sessionNote ? ` · ${a.sessionNote}` : ''}
+                        </span>
+                        {a.status === 'PRESENT' ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-600 font-semibold shrink-0">
+                            <CheckCircle2 className="h-3 w-3" /> Có mặt
+                          </span>
+                        ) : a.status === 'ABSENT' ? (
+                          <span className="inline-flex items-center gap-1 text-rose-600 font-semibold shrink-0">
+                            <XCircle className="h-3 w-3" /> Vắng
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground italic shrink-0">Chưa điểm danh</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {e.studentName && e.studentName !== user.name && (
               <p className="text-[11px] text-muted-foreground mt-2">
@@ -220,9 +342,10 @@ export function StudentClassesPanel() {
               <Button size="sm" variant="ghost" onClick={() => openChat(cls.tutor.id)}>
                 <MessageSquare className="h-3.5 w-3.5 mr-1" /> Nhắn tin
               </Button>
-              {(e.status === 'PENDING' || e.status === 'APPROVED') && (
+              {['PENDING', 'APPROVED', 'WAITLIST'].includes(e.status) && (
                 <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setCancelTarget(e)}>
-                  <XCircle className="h-3.5 w-3.5 mr-1" /> {e.status === 'APPROVED' ? 'Rời lớp' : 'Rút đăng ký'}
+                  <XCircle className="h-3.5 w-3.5 mr-1" />
+                  {e.status === 'APPROVED' ? 'Rời lớp' : e.status === 'WAITLIST' ? 'Rút khỏi chờ' : 'Rút đăng ký'}
                 </Button>
               )}
             </div>
@@ -257,21 +380,27 @@ export function StudentClassesPanel() {
         </details>
       )}
 
-      {/* Dialog xác nhận rút đăng ký / rời lớp */}
+      {/* Dialog xác nhận rút đăng ký / rời lớp / rút khỏi danh sách chờ */}
       <Dialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Ban className="h-5 w-5 text-destructive" />
-              {cancelTarget?.status === 'APPROVED' ? 'Rời lớp học?' : 'Rút đăng ký?'}
+              {cancelTarget?.status === 'APPROVED'
+                ? 'Rời lớp học?'
+                : cancelTarget?.status === 'WAITLIST'
+                  ? 'Rút khỏi danh sách chờ?'
+                  : 'Rút đăng ký?'}
             </DialogTitle>
             <DialogDescription>
               {cancelTarget && (
                 <>
                   Lớp <b>{cancelTarget.class.title}</b> —{' '}
                   {cancelTarget.status === 'APPROVED'
-                    ? 'con bạn đang là học sinh của lớp. Gia sư sẽ nhận được thông báo và sĩ số lớp được giải phóng chỗ cho học sinh khác.'
-                    : 'đăng ký đang chờ gia sư duyệt. Bạn có thể đăng ký lại sau nếu đổi ý.'}
+                    ? 'con bạn đang là học sinh của lớp. Gia sư sẽ nhận được thông báo và sĩ số lớp được giải phóng chỗ cho học sinh trong danh sách chờ.'
+                    : cancelTarget.status === 'WAITLIST'
+                      ? 'bạn đang giữ một vị trí trong danh sách chờ của lớp. Rút khỏi chờ thì mất thứ tự ưu tiên hiện tại.'
+                      : 'đăng ký đang chờ gia sư duyệt. Bạn có thể đăng ký lại sau nếu đổi ý.'}
                 </>
               )}
             </DialogDescription>
@@ -279,7 +408,7 @@ export function StudentClassesPanel() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setCancelTarget(null)}>Giữ nguyên</Button>
             <Button variant="destructive" onClick={confirmCancel} disabled={submitting}>
-              {submitting ? 'Đang xử lý...' : cancelTarget?.status === 'APPROVED' ? 'Xác nhận rời lớp' : 'Xác nhận rút'}
+              {submitting ? 'Đang xử lý...' : 'Xác nhận'}
             </Button>
           </DialogFooter>
         </DialogContent>

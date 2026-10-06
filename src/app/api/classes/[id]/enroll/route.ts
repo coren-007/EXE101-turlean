@@ -1,14 +1,16 @@
 // POST /api/classes/[id]/enroll — phụ huynh/học sinh gửi đăng ký vào lớp học cố định.
 // Quy tắc:
 //  - Lớp phải đang OPEN (PAUSED = tạm dừng tuyển, CLOSED = đã đóng)
-//  - Sĩ số đã duyệt (APPROVED) phải nhỏ hơn capacity
+//  - CÒN CHỖ → đăng ký thường (PENDING, chờ gia sư duyệt)
+//  - HẾT CHỖ → tự động vào DANH SÁCH CHỜ (WAITLIST) theo thứ tự — khi có học sinh
+//    rời lớp hoặc gia sư tăng sĩ số, hệ thống tự chuyển vào lớp (kèm thông báo)
 //  - Mỗi người một đăng ký duy nhất; bị từ chối/rút rồi thì được đăng ký lại
-//  - Gia sư nhận thông báo hệ thống trong hộp tin nhắn để duyệt
+//  - Gia sư nhận thông báo hệ thống trong hộp tin nhắn
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
-import { notifyTutorNewEnrollment } from '@/lib/notify'
+import { notifyTutorNewEnrollment, notifyTutorNewWaitlist } from '@/lib/notify'
 import { formatClassSchedule } from '@/lib/format'
 
 const enrollSchema = z.object({
@@ -51,7 +53,7 @@ export async function POST(
       schedule: true,
       subject: { select: { name: true } },
       tutor: { select: { id: true, name: true, address: true } },
-      enrollments: { select: { id: true, studentParentId: true, status: true } },
+      enrollments: { select: { id: true, studentParentId: true, status: true, createdAt: true } },
     },
   })
   if (!cls) return NextResponse.json({ error: 'Không tìm thấy lớp học' }, { status: 404 })
@@ -69,35 +71,54 @@ export async function POST(
   }
 
   const approved = cls.enrollments.filter(e => e.status === 'APPROVED').length
-  if (approved >= cls.capacity) {
-    return NextResponse.json(
-      { error: `Lớp đã đủ sĩ số (${approved}/${cls.capacity} học sinh)` },
-      { status: 400 },
-    )
-  }
+  const isFull = approved >= cls.capacity
+  const waiting = cls.enrollments
+    .filter(e => e.status === 'WAITLIST')
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
 
   const existing = cls.enrollments.find(e => e.studentParentId === user.id)
-  if (existing && (existing.status === 'PENDING' || existing.status === 'APPROVED')) {
+  if (existing && ['PENDING', 'APPROVED', 'WAITLIST'].includes(existing.status)) {
     return NextResponse.json(
       {
         error:
           existing.status === 'PENDING'
             ? 'Bạn đã gửi đăng ký lớp này — đang chờ gia sư duyệt'
-            : 'Bạn đã ở trong lớp này rồi',
+            : existing.status === 'WAITLIST'
+              ? 'Bạn đã ở trong danh sách chờ của lớp này'
+              : 'Bạn đã ở trong lớp này rồi',
       },
       { status: 400 },
     )
   }
 
-  // Đăng ký mới, hoặc đăng ký lại sau khi bị từ chối / đã rút
-  const payload = { studentName, note, status: 'PENDING', updatedAt: new Date() }
+  // Còn chỗ → PENDING chờ duyệt; hết chỗ → WAITLIST danh sách chờ (tự động vào lớp khi có chỗ)
+  const status = isFull ? 'WAITLIST' : 'PENDING'
+  const payload = { studentName, note, status, updatedAt: new Date() }
   const enrollment = existing
     ? await db.classEnrollment.update({ where: { id: existing.id }, data: payload })
     : await db.classEnrollment.create({
         data: { classId: cls.id, studentParentId: user.id, ...payload },
       })
 
-  // Thông báo cho gia sư (best-effort, không chặn luồng chính)
+  // ===== Thông báo (best-effort, không chặn luồng chính) =====
+  if (status === 'WAITLIST') {
+    const position = waiting.length + 1
+    await notifyTutorNewWaitlist({
+      tutorId: cls.tutorId,
+      studentParentId: user.id,
+      parentName: user.name,
+      studentName,
+      classTitle: cls.title,
+      position,
+      note,
+    })
+    return NextResponse.json({
+      enrollment,
+      waitlistPosition: position,
+      message: `Lớp "${cls.title}" đã đủ sĩ số (${approved}/${cls.capacity}) — bạn đã vào DANH SÁCH CHỖ (vị trí #${position}). Khi có chỗ trống, hệ thống tự động chuyển bạn vào lớp và gửi thông báo.`,
+    })
+  }
+
   await notifyTutorNewEnrollment({
     tutorId: cls.tutorId,
     studentParentId: user.id,

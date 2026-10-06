@@ -6,11 +6,10 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider  = "sqlite"
   url       = env("DATABASE_URL")
-  // Supabase: DATABASE_URL = pooled (pgbouncer, port 6543) cho app runtime
-  //           DIRECT_URL    = direct  (port 5432) cho prisma db push / migrate
-  directUrl = env("DIRECT_URL")
+  // Sandbox local: SQLite (để live preview không cần PostgreSQL/Supabase)
+  // Bản production trên GitHub dùng postgresql + DIRECT_URL (Supabase)
 }
 
 model User {
@@ -54,6 +53,7 @@ model User {
   // Lớp học cố định (nhóm) gia sư mở tại nhà mình — phụ huynh/học sinh đăng ký vào lớp
   groupClasses      GroupClass[]     @relation("GroupClassTutor")
   classEnrollments  ClassEnrollment[] @relation("ClassEnrollmentStudent")
+  classAttendance   ClassAttendance[] @relation("ClassAttendanceStudent")
 }
 
 model Subject {
@@ -206,6 +206,7 @@ model GroupClass {
   subject      Subject             @relation(fields: [subjectId], references: [id])
   schedule     ClassScheduleSlot[]
   enrollments  ClassEnrollment[]
+  sessions     ClassSession[]
 
   @@index([tutorId])
 }
@@ -249,4 +250,44 @@ model Session {
   userId     String
   expiresAt  DateTime
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ===== Buổi học cụ thể của lớp nhóm (Mục đích 1 — hoàn thiện quản lý lớp) =====
+// Sinh tự động từ ClassScheduleSlot theo từng tuần (rolling 12 tuần, tự gia hạn
+// khi gần hết). Mỗi buổi là một thực thể riêng → có thể ĐIỂM DANH (ClassAttendance),
+// DỜI BUỔI (dạy bù) hoặc NGHỦ BUỔI (hủy 1 buổi) mà không đè cả lịch tuần.
+model ClassSession {
+  id        String   @id @default(cuid())
+  classId   String
+  date      String   // YYYY-MM-DD
+  startTime String   // HH:MM
+  endTime   String   // HH:MM
+  // SCHEDULED = chưa diễn ra | COMPLETED = đã điểm danh/hoàn thành | CANCELLED = nghỉ buổi
+  status    String   @default("SCHEDULED")
+  note      String?  // lý do nghỉ buổi / ghi chú dời buổi
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class      GroupClass       @relation(fields: [classId], references: [id], onDelete: Cascade)
+  attendance ClassAttendance[]
+
+  @@index([classId, date])
+  @@unique([classId, date, startTime])
+}
+
+// Điểm danh 1 học sinh trong 1 buổi học lớp nhóm (PRE/ABSENT)
+model ClassAttendance {
+  id              String   @id @default(cuid())
+  sessionId       String
+  studentParentId String
+  // PRESENT = có mặt | ABSENT = vắng mặt
+  status          String
+  markedAt        DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  session       ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentParent User         @relation("ClassAttendanceStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, studentParentId])
+  @@index([studentParentId])
 }

@@ -287,3 +287,151 @@ export async function notifyTutorEnrollmentCancelled(params: {
     body,
   })
 }
+
+// ===== Lớp học cố định — waitlist, buổi học & thay đổi lịch =====
+
+/** Thông báo cho GIA SƯ khi có học sinh vào DANH SÁCH CHỜ (lớp đã đủ sĩ số) */
+export async function notifyTutorNewWaitlist(params: {
+  tutorId: string
+  studentParentId: string
+  parentName: string
+  studentName: string
+  classTitle: string
+  position: number
+  note?: string | null
+}) {
+  const who =
+    params.studentName && params.studentName !== params.parentName
+      ? `học sinh ${params.studentName} (do ${params.parentName} đăng ký)`
+      : params.parentName
+  const lines = [
+    `[Danh sách chờ] ${who} đã đăng ký vào danh sách chờ của lớp "${params.classTitle}" — vị trí #${params.position}.`,
+    'Lớp hiện đã đủ sĩ số. Khi có học sinh rời lớp hoặc bạn tăng sĩ số, hệ thống tự động chuyển học sinh chờ vào lớp.',
+  ]
+  if (params.note) lines.push(`Lời nhắn: ${params.note}`)
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentParentId,
+    senderId: params.studentParentId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho PHỤ HUYNH khi được TỰ ĐỘNG chuyển từ danh sách chờ vào lớp */
+export async function notifyStudentWaitlistPromoted(params: {
+  tutorId: string
+  studentId: string
+  tutorName: string
+  studentName: string
+  classTitle: string
+  schedule: string
+  address?: string | null
+  monthlyFee?: number | null
+}) {
+  const lines = [
+    `[Có chỗ trống!] Học sinh ${params.studentName} vừa được chuyển TỰ ĐỘNG từ danh sách chờ vào lớp "${params.classTitle}" (gia sư ${params.tutorName}).`,
+    `Lịch học cố định: ${params.schedule}.`,
+  ]
+  if (params.address) lines.push(`Địa điểm: ${params.address}.`)
+  if (params.monthlyFee) lines.push(`Học phí: ${vnd(params.monthlyFee)}/tháng — thanh toán trực tiếp cho gia sư.`)
+  lines.push('Chi tiết buổi học trong Bảng điều khiển của bạn.')
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho TOÀN BỘ học sinh trong lớp khi GIA SƯ ĐỔI LỊCH TUẦN của lớp */
+export async function notifyStudentsScheduleChanged(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  newSchedule: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Đổi lịch lớp] Gia sư ${params.tutorName} đã thay đổi lịch học tuần của lớp "${params.classTitle}".\n` +
+      `Lịch mới: ${params.newSchedule}.\n` +
+      'Các buổi đã hoàn thành giữ nguyên — chỉ buổi chưa diễn ra được cập nhật theo lịch mới.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh trong lớp khi 1 BUỔI được dời (dạy bù) */
+export async function notifyStudentsSessionRescheduled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  oldDate: string
+  oldTime: string
+  newDate: string
+  newTime: string
+  reason?: string | null
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Dời buổi học] Buổi ${params.oldDate} ${params.oldTime} của lớp "${params.classTitle}" đã được gia sư ${params.tutorName} dời sang ${params.newDate} ${params.newTime}.` +
+      (params.reason ? `\nLý do: ${params.reason}.` : '')
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh trong lớp khi 1 BUỔI bị nghỉ (hủy buổi) */
+export async function notifyStudentsSessionCancelled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  date: string
+  time: string
+  reason: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nghỉ buổi] Buổi ${params.date} ${params.time} của lớp "${params.classTitle}" đã bị hủy bởi gia sư ${params.tutorName}.\n` +
+      `Lý do: ${params.reason}.\n` +
+      'Các buổi khác trong tuần vẫn diễn ra bình thường.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh trong lớp khi lớp ĐÓNG / bị XÓA */
+export async function notifyStudentsClassClosed(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  deleted: boolean
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[${params.deleted ? 'Lớp đã xóa' : 'Lớp đã đóng'}] Lớp "${params.classTitle}" (gia sư ${params.tutorName}) ` +
+        `${params.deleted ? 'đã bị xóa khỏi hệ thống' : 'đã kết thúc, không còn nhận học sinh'}. ` +
+        'Bạn có thể nhắn tin cho gia sư hoặc tìm lớp khác phù hợp.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}

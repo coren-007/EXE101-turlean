@@ -85,12 +85,56 @@ export async function GET(req: Request) {
       if (studentOk) emailsSent++; else emailsSkipped++
     }
 
+    // ===== Lớp học cố định (nhóm): nhắc buổi học mai cho gia sư + học sinh trong lớp =====
+    const tomorrowSessions = await db.classSession.findMany({
+      where: { status: 'SCHEDULED', date: tomorrowStr },
+      include: {
+        class: {
+          include: {
+            tutor: { select: { name: true, email: true } },
+            subject: { select: { name: true } },
+            enrollments: {
+              where: { status: 'APPROVED' },
+              include: { studentParent: { select: { name: true, email: true } } },
+            },
+          },
+        },
+      },
+    })
+
+    for (const s of tomorrowSessions) {
+      const subject = `[GiaSuConnect] Nhắc lớp học mai: ${s.class.title} — ${s.startTime}`
+      const text =
+        `Xin chào,\n\n` +
+        `Lớp "${s.class.title}" có buổi học vào ngày mai (${tomorrowStr}) lúc ${s.startTime} - ${s.endTime}.\n` +
+        `Môn: ${s.class.subject.name}\n` +
+        `Địa điểm: ${s.class.meetingType === 'ONLINE' ? 'Trực tuyến' : s.class.address ?? 'Tại nhà gia sư'}\n` +
+        `\nVui lòng đến đúng giờ. Hẹn gặp bạn!`
+
+      const tutorOk = await sendEmail(
+        s.class.tutor.email,
+        subject,
+        `Chào ${s.class.tutor.name},\n\n${text}`,
+      )
+      if (tutorOk) emailsSent++; else emailsSkipped++
+
+      for (const e of s.class.enrollments) {
+        const ok = await sendEmail(
+          e.studentParent.email,
+          subject,
+          `Chào ${e.studentParent.name},\n\n${text.replace('Lớp', `Lớp (${e.studentName ?? e.studentParent.name})`)}`,
+        )
+        if (ok) emailsSent++; else emailsSkipped++
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       checkedAt: new Date().toISOString(),
       timezone: 'Asia/Ho_Chi_Minh',
       date: tomorrowStr,
       bookingsFound: upcomingBookings.length,
+      classSessionsFound: tomorrowSessions.length,
       emailsSent,
       emailsSkipped, // bỏ qua khi chưa cấu hình RESEND_API_KEY
     })

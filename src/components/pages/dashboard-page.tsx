@@ -24,7 +24,7 @@ import {
 import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
 import { TutorSubjectsPanel } from '@/components/dashboard/tutor-subjects-panel'
-import { TutorSchedulePanel } from '@/components/dashboard/tutor-schedule-panel'
+import { TutorScheduleCalendar } from '@/components/dashboard/schedule/tutor-schedule-calendar'
 import { TutorClassManager } from '@/components/dashboard/tutor-class-manager'
 import { StudentClassesPanel } from '@/components/dashboard/student-classes-panel'
 
@@ -125,6 +125,20 @@ const COMPLETENESS_LABELS: Record<string, string> = {
 // ===== Helpers cho lịch tuần (Mục đích 1 — quản lý lớp học) =====
 const DAY_LABELS = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật']
 
+// Buổi học lớp nhóm hiển thị trên lịch tuần hợp nhất (Mục đích 1 — trước đây
+// WeekSchedule chỉ hiện buổi 1-1, lịch lớp nhóm bị tách rời)
+interface GroupSessionEntry {
+  id: string
+  classId: string
+  date: string
+  startTime: string
+  endTime: string
+  status: string
+  title: string
+  subjectName: string
+  counterpartName: string // gia sư (đối với học sinh) / không dùng (đối với gia sư)
+}
+
 // Thứ Hai của tuần cách hiện tại `offset` tuần
 function weekStart(offset: number): Date {
   const d = new Date()
@@ -187,6 +201,8 @@ export function DashboardPage() {
   const [weekOffset, setWeekOffset] = useState(0)
   // Lớp học cố định (nhóm): đếm cho thẻ hành động nhanh + badge tab
   const [classStats, setClassStats] = useState<{ open: number; pending: number } | null>(null)
+  // Buổi học lớp nhóm (hợp nhất vào lịch tuần + hiển thị buổi tới)
+  const [groupSessions, setGroupSessions] = useState<GroupSessionEntry[]>([])
 
   // P0-1: dialog hủy lịch kèm lý do
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null)
@@ -209,10 +225,15 @@ export function DashboardPage() {
       // P0-1: điểm tin cậy & lịch sử vi phạm của chính mình
       fetch('/api/users/me/violations').then(r => r.json()).catch(() => null),
       // Lớp học cố định (nhóm) của gia sư — đếm lớp đang mở + đơn chờ duyệt
+      // + BUỔI HỌC lớp nhóm (hợp nhất lịch tuần)
       user.role === 'TUTOR'
         ? fetch('/api/classes/mine').then(r => r.json()).catch(() => null)
         : Promise.resolve(null),
-    ]).then(([data, s, rel, clsMine]) => {
+      // Học sinh: buổi học lớp nhóm của các lớp đã VÀO LỚP (hợp nhất lịch tuần)
+      user.role === 'STUDENT'
+        ? fetch('/api/enrollments/mine').then(r => r.json()).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([data, s, rel, clsMine, enrollMine]) => {
       setBookings(data.bookings || [])
       if (s?.stats) setStats(s.stats)
       if (s?.completeness) setCompleteness(s.completeness)
@@ -223,6 +244,47 @@ export function DashboardPage() {
           (sum: number, c: any) => sum + c.enrollments.filter((e: any) => e.status === 'PENDING').length, 0,
         )
         setClassStats({ open, pending })
+        // Trích buổi học lớp nhóm của gia sư (loại buổi đã nghỉ)
+        const sessions: GroupSessionEntry[] = []
+        for (const c of clsMine.classes as any[]) {
+          for (const s2 of c.sessions ?? []) {
+            if (s2.status === 'CANCELLED') continue
+            sessions.push({
+              id: s2.id,
+              classId: c.id,
+              date: s2.date,
+              startTime: s2.startTime,
+              endTime: s2.endTime,
+              status: s2.status,
+              title: c.title,
+              subjectName: c.subject.name,
+              counterpartName: '',
+            })
+          }
+        }
+        setGroupSessions(sessions)
+      }
+      if (enrollMine?.enrollments) {
+        // Chỉ lớp đã APPROVED mới hiện buổi học trên lịch tuần của học sinh
+        const sessions: GroupSessionEntry[] = []
+        for (const e of enrollMine.enrollments as any[]) {
+          if (e.status !== 'APPROVED') continue
+          for (const s2 of e.class.sessions ?? []) {
+            if (s2.status === 'CANCELLED') continue
+            sessions.push({
+              id: s2.id,
+              classId: e.class.id,
+              date: s2.date,
+              startTime: s2.startTime,
+              endTime: s2.endTime,
+              status: s2.status,
+              title: e.class.title,
+              subjectName: e.class.subject.name,
+              counterpartName: e.class.tutor.name,
+            })
+          }
+        }
+        setGroupSessions(sessions)
       }
       setLoading(false)
     })
@@ -573,7 +635,7 @@ export function DashboardPage() {
     )
   }
 
-  // ===== Mục đích 1 — Lịch tuần: xem nhanh mọi buổi trong tuần (điều hướng được) =====
+  // ===== Mục đích 1 — Lịch tuần HỢP NHẤT: buổi 1-1 + buổi lớp nhóm trên cùng lưới =====
   const WeekSchedule = () => {
     const start = weekStart(weekOffset)
     const days = Array.from({ length: 7 }, (_, i) => {
@@ -584,19 +646,32 @@ export function DashboardPage() {
     const todayKey = dateKey(new Date())
     const cells = days.map(d => {
       const key = dateKey(d)
-      const sessions = bookings.filter(b =>
+      const bSessions = bookings.filter(b =>
         b.date === key &&
         (b.status === 'PENDING' || b.status === 'CONFIRMED' || b.status === 'COMPLETED'),
       )
-      return { d, key, sessions }
+      // Buổi lớp nhóm cùng ngày (đã nghỉ không hiển thị)
+      const gSessions = groupSessions.filter(g => g.date === key)
+      return { d, key, bSessions, gSessions }
     })
     return (
       <Card className="p-4 mb-6">
         <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <h3 className="font-semibold text-sm flex items-center gap-2">
             <CalendarCheck className="h-4 w-4 text-primary" /> Lịch tuần
+            <span className="text-[10px] font-normal text-muted-foreground">
+              buổi 1-1 + lớp nhóm
+            </span>
           </h3>
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs font-semibold"
+              onClick={() => navigate({ name: 'dashboard', tab: 'schedule' })}
+            >
+              Lịch đầy đủ
+            </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset(w => w - 1)} aria-label="Tuần trước">
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -614,7 +689,7 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="grid grid-cols-7 gap-1.5">
-          {cells.map(({ d, key, sessions }) => (
+          {cells.map(({ d, key, bSessions, gSessions }) => (
             <div
               key={key}
               className={`rounded-lg border p-1.5 min-h-[70px] ${key === todayKey ? 'border-primary bg-primary/5' : ''}`}
@@ -624,7 +699,7 @@ export function DashboardPage() {
               </p>
               <p className={`text-sm font-bold ${key === todayKey ? 'text-primary' : ''}`}>{d.getDate()}</p>
               <div className="mt-0.5 space-y-0.5">
-                {sessions.slice(0, 2).map(s => (
+                {bSessions.slice(0, 2).map(s => (
                   <div
                     key={s.id}
                     className={`text-[9px] leading-tight px-1 py-0.5 rounded truncate ${
@@ -639,8 +714,22 @@ export function DashboardPage() {
                     {s.startTime} {s.subject.name}
                   </div>
                 ))}
-                {sessions.length > 2 && (
-                  <p className="text-[9px] text-muted-foreground">+{sessions.length - 2} buổi</p>
+                {/* Buổi lớp nhóm — nền tím để phân biệt buổi 1-1 */}
+                {gSessions.slice(0, 2).map(g => (
+                  <div
+                    key={g.id}
+                    className={`text-[9px] leading-tight px-1 py-0.5 rounded truncate ${
+                      g.status === 'COMPLETED'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-violet-100 text-violet-700'
+                    }`}
+                    title={`${g.startTime} ${g.title} · ${g.subjectName}${g.counterpartName ? ` · ${g.counterpartName}` : ''}`}
+                  >
+                    {g.startTime} {g.title.length > 14 ? g.title.slice(0, 14) + '…' : g.title}
+                  </div>
+                ))}
+                {bSessions.length + gSessions.length > 4 && (
+                  <p className="text-[9px] text-muted-foreground">+{bSessions.length + gSessions.length - 4} buổi</p>
                 )}
               </div>
             </div>
@@ -1050,7 +1139,7 @@ export function DashboardPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-sm">Lịch dạy</p>
-                  <p className="text-xs text-muted-foreground">{stats?.availabilityCount || 0} khung giờ/tuần</p>
+                  <p className="text-xs text-muted-foreground">Lịch tuần/tháng · điểm danh · dời buổi</p>
                 </div>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
@@ -1177,7 +1266,7 @@ export function DashboardPage() {
         </>)}
 
         {activeWsTab === 'subjects' && <TutorSubjectsPanel />}
-        {activeWsTab === 'schedule' && <TutorSchedulePanel />}
+        {activeWsTab === 'schedule' && <TutorScheduleCalendar />}
         {activeWsTab === 'classes' && <TutorClassManager />}
 
         <DashboardDialogs />

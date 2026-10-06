@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { checkClassSlotConflicts, generateSessionsForClass } from '@/lib/class-sessions'
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -58,10 +59,30 @@ export async function GET(req: NextRequest) {
     include: {
       subject: { select: { id: true, name: true, slug: true, icon: true } },
       schedule: true,
-      enrollments: { select: { id: true, status: true, studentParentId: true } },
+      enrollments: { select: { id: true, status: true, studentParentId: true, createdAt: true } },
     },
     orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
   })
+
+  // Buổi học SẮP DIỄN RA của từng lớp (hiển thị "buổi tới" + tổng buổi tương lai)
+  const classIds = classes.map(c => c.id)
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const upcomingSessions = classIds.length
+    ? await db.classSession.findMany({
+        where: { classId: { in: classIds }, status: 'SCHEDULED', date: { gte: todayStr } },
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+        select: { classId: true, date: true, startTime: true, endTime: true },
+      })
+    : []
+  const nextByClass = new Map<string, { date: string; startTime: string; endTime: string }>()
+  const upcomingCountByClass = new Map<string, number>()
+  for (const s of upcomingSessions) {
+    if (!nextByClass.has(s.classId)) {
+      nextByClass.set(s.classId, { date: s.date, startTime: s.startTime, endTime: s.endTime })
+    }
+    upcomingCountByClass.set(s.classId, (upcomingCountByClass.get(s.classId) ?? 0) + 1)
+  }
 
   // Người xem là phụ huynh/học sinh → đính kèm trạng thái đăng ký của chính họ
   const viewer = await getCurrentUser()
@@ -71,8 +92,13 @@ export async function GET(req: NextRequest) {
     classes: classes.map(c => {
       const approved = c.enrollments.filter(e => e.status === 'APPROVED').length
       const pending = c.enrollments.filter(e => e.status === 'PENDING').length
+      const waitlist = c.enrollments.filter(e => e.status === 'WAITLIST')
       const mine = viewerId
         ? c.enrollments.find(e => e.studentParentId === viewerId) ?? null
+        : null
+      // Vị trí chờ của người xem (nếu đang trong danh sách chờ)
+      const myWaitlistPosition = mine && mine.status === 'WAITLIST'
+        ? waitlist.filter(w => w.createdAt <= mine.createdAt).length
         : null
       return {
         id: c.id,
@@ -94,7 +120,11 @@ export async function GET(req: NextRequest) {
         })),
         enrolledCount: approved,
         pendingCount: pending,
+        waitlistCount: waitlist.length,
+        nextSession: nextByClass.get(c.id) ?? null,
+        upcomingCount: upcomingCountByClass.get(c.id) ?? 0,
         myEnrollment: mine ? { id: mine.id, status: mine.status } : null,
+        myWaitlistPosition,
       }
     }),
   })
@@ -161,6 +191,16 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Chống trùng lịch CHÉO (B9): lớp mới không được trùng lớp nhóm khác của gia sư
+  // (OPEN/PAUSED) hoặc buổi 1-1 đã nhận trong 8 tuần tới
+  const conflicts = await checkClassSlotConflicts(user.id, schedule)
+  if (conflicts.length > 0) {
+    return NextResponse.json(
+      { error: `Không thể mở lớp — trùng lịch dạy hiện có: ${conflicts[0]}${conflicts.length > 1 ? ` (và ${conflicts.length - 1} xung đột khác)` : ''}` },
+      { status: 409 },
+    )
+  }
+
   const created = await db.groupClass.create({
     data: {
       tutorId: user.id,
@@ -188,5 +228,8 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json(created, { status: 201 })
+  // Sinh buổi học cụ thể 12 tuần tới từ lịch tuần (điểm danh / dời buổi dựa trên này)
+  const sessionsCreated = await generateSessionsForClass(created.id)
+
+  return NextResponse.json({ ...created, sessionsCreated }, { status: 201 })
 }

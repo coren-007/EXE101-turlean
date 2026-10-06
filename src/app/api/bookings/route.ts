@@ -159,6 +159,8 @@ export async function POST(req: NextRequest) {
 
   // Chặn đặt 1-1 trùng LỚP HỌC CỐ ĐỊNH (nhóm) của gia sư — lớp OPEN/PAUSED vẫn đang diễn ra,
   // CLOSED mới kết thúc. Kiểm tra theo từng ngày của khóa định kỳ bên dưới.
+  // Kiểm tra CẢ: (a) mẫu lịch tuần (slot) và (b) buổi ClassSession thực tế đã DỜI
+  // khỏi mẫu tuần (dạy bù) — đảm bảo không bao giờ chồng chéo sau khi dời buổi.
   const classConflictFor = async (d: string) => {
     const dow = new Date(`${d}T00:00`).getDay()
     const slots = await db.classScheduleSlot.findMany({
@@ -168,7 +170,21 @@ export async function POST(req: NextRequest) {
       },
       include: { class: { select: { title: true } } },
     })
-    return slots.find(
+    const slotHit = slots.find(
+      s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
+    )
+    if (slotHit) return slotHit
+
+    // Buổi cụ thể cùng ngày (bao gồm buổi đã dời ngày — không còn theo mẫu tuần)
+    const daySessions = await db.classSession.findMany({
+      where: {
+        date: d,
+        status: { in: ['SCHEDULED', 'COMPLETED'] },
+        class: { tutorId, status: { in: ['OPEN', 'PAUSED'] } },
+      },
+      include: { class: { select: { title: true } } },
+    })
+    return daySessions.find(
       s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
     )
   }

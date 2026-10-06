@@ -76,6 +76,8 @@ export function TutorOneToOnePanel() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [acting, setActing] = useState<string | null>(null)
+  // Xem toàn bộ lịch sử buổi đã kết thúc (mặc định hiện 3 buổi gần nhất)
+  const [showAllPast, setShowAllPast] = useState<Record<string, boolean>>({})
 
   // Dialog từ chối / hủy buổi học (kèm lý do)
   const [cancelTarget, setCancelTarget] = useState<OneToOneBooking | null>(null)
@@ -198,33 +200,17 @@ export function TutorOneToOnePanel() {
   const upcomingTotal = bookings.filter(b => b.status === 'CONFIRMED' && b.date >= today).length
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-lg font-extrabold flex items-center gap-2">
-            <Users className="h-5 w-5 text-primary" /> Lớp theo lịch dạy (1-1)
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Các buổi dạy 1-1 phụ huynh đặt theo từng buổi — quản lý theo học sinh,
-            xác nhận yêu cầu và đánh dấu hoàn thành ngay tại đây.
-          </p>
-        </div>
-      </div>
-
-      {/* Tổng quan nhanh */}
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="p-3 text-center">
-          <p className="text-xs text-muted-foreground">Học sinh 1-1</p>
-          <p className="text-xl font-extrabold text-primary">{groups.length}</p>
-        </Card>
-        <Card className="p-3 text-center">
-          <p className="text-xs text-muted-foreground">Yêu cầu chờ xác nhận</p>
-          <p className="text-xl font-extrabold text-amber-600">{pendingTotal}</p>
-        </Card>
-        <Card className="p-3 text-center">
-          <p className="text-xs text-muted-foreground">Buổi sắp dạy</p>
-          <p className="text-xl font-extrabold">{upcomingTotal}</p>
-        </Card>
+    <div className="space-y-4">
+      {/* Toolbar mỏng: tổng quan 1 dòng — vào thẳng danh sách học sinh */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-muted-foreground">
+          <b className="text-foreground">{groups.length}</b> học sinh 1-1
+          {pendingTotal > 0 && (<> · <span className="font-semibold text-amber-600">{pendingTotal} yêu cầu chờ xác nhận</span></>)}
+          {upcomingTotal > 0 && (<> · <b className="text-foreground">{upcomingTotal}</b> buổi sắp dạy</>)}
+        </p>
+        <Button size="sm" variant="outline" className="rounded-full h-8" onClick={() => navigate({ name: 'dashboard', tab: 'schedule' })}>
+          <Clock className="h-3.5 w-3.5 mr-1" /> Mở giờ trống
+        </Button>
       </div>
 
       {groups.length === 0 ? (
@@ -243,10 +229,11 @@ export function TutorOneToOnePanel() {
         <div className="space-y-4">
           {groups.map(g => {
             const isOpen = expanded === g.student.id
-            // Các buổi hiển thị khi mở rộng: chờ xác nhận + sắp tới + 3 buổi gần nhất (đã xong/hủy)
-            const recent = [...g.completed, ...g.cancelled]
+            // Buổi đã kết thúc: mặc định 3 buổi gần nhất, mở "xem tất cả" để thấy toàn bộ
+            const pastSorted = [...g.completed, ...g.cancelled]
               .sort((a, b) => (b.date + b.startTime).localeCompare(a.date + a.startTime))
-              .slice(0, 3)
+            const showAll = showAllPast[g.student.id] ?? false
+            const recent = showAll ? pastSorted : pastSorted.slice(0, 3)
             const rows = [...g.pending, ...g.upcoming, ...recent]
             const ModeIcon = g.next ? (MODE_META[g.next.mode]?.icon ?? Clock) : Clock
             return (
@@ -300,39 +287,31 @@ export function TutorOneToOnePanel() {
                   </div>
                 </div>
 
-                {/* Dòng 2: buổi học tiếp theo + thu nhập */}
-                <div className="grid sm:grid-cols-2 gap-2.5 mt-4">
-                  <div className="rounded-xl bg-muted/50 p-3">
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1">
-                      <CalendarClock className="h-3 w-3" /> Buổi học tiếp theo
-                    </p>
-                    {g.next ? (
-                      <p className="text-sm font-medium flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-primary">{formatDate(g.next.date)}</span>
-                        <span>{g.next.startTime}–{g.next.endTime}</span>
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <ModeIcon className="h-3 w-3" /> {MODE_META[g.next.mode]?.label}
-                        </span>
-                      </p>
-                    ) : g.pending.length > 0 ? (
-                      <p className="text-sm text-amber-600 font-medium">
-                        Có {g.pending.length} yêu cầu đang chờ bạn xác nhận
-                      </p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Chưa có buổi nào được xác nhận — mở giờ trống để nhận thêm lớp
-                      </p>
-                    )}
-                  </div>
-                  <div className="rounded-xl bg-muted/50 p-3">
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1">
-                      <Wallet className="h-3 w-3" /> Đã thu từ học sinh này
-                    </p>
-                    <p className="text-sm">
-                      <span className="font-bold">{formatVnd(g.earned)}</span>
-                      <span className="text-xs text-muted-foreground"> · {g.completed.length} buổi hoàn thành</span>
-                    </p>
-                  </div>
+                {/* Dòng 2: buổi tới + thu nhập — gọn 1 dòng duy nhất */}
+                <div className="mt-3 rounded-xl bg-muted/50 px-3 py-2 text-xs flex items-center gap-3 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 font-semibold">
+                    <CalendarClock className="h-3.5 w-3.5 text-primary shrink-0" /> Buổi tới:
+                  </span>
+                  {g.next ? (
+                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                      <b className="text-primary">{formatDate(g.next.date)}</b>
+                      <span>{g.next.startTime}–{g.next.endTime}</span>
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        <ModeIcon className="h-3 w-3" /> {MODE_META[g.next.mode]?.label}
+                      </span>
+                    </span>
+                  ) : g.pending.length > 0 ? (
+                    <span className="text-amber-600 font-medium">
+                      {g.pending.length} yêu cầu đang chờ bạn xác nhận
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Chưa có buổi nào được xác nhận</span>
+                  )}
+                  {g.earned > 0 && (
+                    <span className="ml-auto inline-flex items-center gap-1 text-muted-foreground">
+                      <Wallet className="h-3 w-3" /> Đã thu <b className="text-foreground">{formatVnd(g.earned)}</b>
+                    </span>
+                  )}
                 </div>
 
                 {/* Chi tiết buổi học (mở rộng) */}
@@ -410,6 +389,17 @@ export function TutorOneToOnePanel() {
                           )
                         })}
                       </div>
+                    )}
+                    {/* Xem toàn bộ lịch sử buổi đã kết thúc của học sinh này */}
+                    {pastSorted.length > 3 && (
+                      <button
+                        className="text-[11px] text-primary hover:underline mt-2.5"
+                        onClick={() => setShowAllPast(prev => ({ ...prev, [g.student.id]: !showAll }))}
+                      >
+                        {showAll
+                          ? 'Thu gọn lịch sử'
+                          : `Xem tất cả ${pastSorted.length} buổi đã kết thúc (hiện 3 gần nhất)`}
+                      </button>
                     )}
                   </div>
                 )}

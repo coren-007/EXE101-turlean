@@ -1,16 +1,22 @@
 // PATCH /api/classes/[id]/enrollments/[enrollmentId] — đổi trạng thái một đăng ký:
 //  - GIA SƯ (chủ lớp): PENDING → APPROVED (duyệt vào lớp, chặn khi đủ sĩ số)
 //                      PENDING → REJECTED (từ chối)
+//                      WAITLIST → APPROVED (chuyển học sinh chờ vào lớp)
+//                      WAITLIST → REJECTED (gỡ khỏi danh sách chờ)
 //                      APPROVED → CANCELLED (mời học sinh rời lớp)
-//  - PHỤ HUYNH/HỌC SINH (chủ đăng ký): PENDING/APPROVED → CANCELLED (rút đăng ký)
-// Bên còn lại nhận thông báo hệ thống trong hộp tin nhắn.
+//  - PHỤ HUYNH/HỌC SINH (chủ đăng ký): PENDING/APPROVED/WAITLIST → CANCELLED
+//    (rút đăng ký / rời lớp / rút khỏi danh sách chờ)
+// Khi một học sinh APPROVED rời lớp → hệ thống TỰ ĐỘNG chuyển học sinh đầu tiên
+// trong danh sách chờ vào lớp và gửi thông báo cho cả hai bên.
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { promoteWaitlist } from '@/lib/class-sessions'
 import {
   notifyStudentEnrollmentApproved,
   notifyStudentEnrollmentRejected,
   notifyTutorEnrollmentCancelled,
+  notifyStudentWaitlistPromoted,
 } from '@/lib/notify'
 import { formatClassSchedule } from '@/lib/format'
 
@@ -55,6 +61,7 @@ export async function PATCH(
   if (isTutorOwner) {
     const ok =
       (enrollment.status === 'PENDING' && (status === 'APPROVED' || status === 'REJECTED')) ||
+      (enrollment.status === 'WAITLIST' && (status === 'APPROVED' || status === 'REJECTED')) ||
       (enrollment.status === 'APPROVED' && status === 'CANCELLED')
     if (!ok) {
       return NextResponse.json(
@@ -63,10 +70,10 @@ export async function PATCH(
       )
     }
   } else {
-    // Phụ huynh/học sinh: chỉ được rút đăng ký của chính mình
-    if (status !== 'CANCELLED' || !['PENDING', 'APPROVED'].includes(enrollment.status)) {
+    // Phụ huynh/học sinh: chỉ được rút đăng ký của chính mình (chờ duyệt / trong lớp / trong danh sách chờ)
+    if (status !== 'CANCELLED' || !['PENDING', 'APPROVED', 'WAITLIST'].includes(enrollment.status)) {
       return NextResponse.json(
-        { error: 'Bạn chỉ thể rút đăng ký đang chờ duyệt hoặc đang theo học' },
+        { error: 'Bạn chỉ thể rút đăng ký đang chờ duyệt, đang theo học hoặc đang trong danh sách chờ' },
         { status: 403 },
       )
     }
@@ -94,6 +101,7 @@ export async function PATCH(
   // ---- Thông báo cho bên kia (best-effort) ----
   const studentName = enrollment.studentName ?? enrollment.studentParent.name
   const schedule = formatClassSchedule(cls.schedule)
+  const wasWaitlist = enrollment.status === 'WAITLIST'
   if (status === 'APPROVED') {
     await notifyStudentEnrollmentApproved({
       tutorId: cls.tutorId,
@@ -124,5 +132,33 @@ export async function PATCH(
     })
   }
 
-  return NextResponse.json(updated)
+  // ---- Học sinh APPROVED rời lớp → TỰ ĐỘNG chuyển người chờ đầu tiên vào lớp ----
+  let promoted: { id: string; name: string }[] = []
+  if (status === 'CANCELLED' && enrollment.status === 'APPROVED') {
+    const { cls: fresh, promoted: plist } = await promoteWaitlist(id)
+    promoted = plist.map(p => ({
+      id: p.studentParent.id,
+      name: p.studentName ?? p.studentParent.name,
+    }))
+    if (fresh) {
+      for (const p of plist) {
+        await notifyStudentWaitlistPromoted({
+          tutorId: fresh.tutorId,
+          studentId: p.studentParent.id,
+          tutorName: fresh.tutor.name,
+          studentName: p.studentName ?? p.studentParent.name,
+          classTitle: fresh.title,
+          schedule: formatClassSchedule(fresh.schedule),
+          address: fresh.address,
+          monthlyFee: fresh.monthlyFee,
+        }).catch(() => {})
+      }
+    }
+  }
+
+  return NextResponse.json({
+    ...updated,
+    wasWaitlist,
+    promotedFromWaitlist: promoted,
+  })
 }

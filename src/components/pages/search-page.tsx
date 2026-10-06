@@ -14,9 +14,10 @@ import { Sheet, SheetContent, SheetTitle, SheetHeader } from '@/components/ui/sh
 import { TutorCard, Tutor } from '@/components/tutor-card'
 import {
   Search, MapPin, Home, School, SlidersHorizontal, LayoutGrid, Map as MapIcon,
-  X, Navigation, Star, GraduationCap, Video, ChevronLeft, ChevronRight, ChevronDown
+  X, Navigation, Star, GraduationCap, Video, ChevronLeft, ChevronRight, ChevronDown,
+  Users, CalendarClock, Hourglass, BadgeCheck, Clock
 } from 'lucide-react'
-import { formatVnd, formatVndShort } from '@/lib/format'
+import { formatVnd, formatVndShort, formatDate, CLASS_DAY_NAMES, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
 
 // Dynamic import Leaflet map (no SSR)
@@ -71,6 +72,40 @@ const PRICE_CHIPS = [
   { value: 500000, label: '≤ 500k' },
 ]
 
+// Lớp học nhóm công khai (tab "Lớp học" — kiểu Experiences của Airbnb)
+interface ClassDiscoverItem {
+  id: string
+  tutorId: string
+  title: string
+  subject: { id: string; name: string; slug?: string; icon?: string | null }
+  gradeLevel?: string | null
+  description?: string | null
+  meetingType: string
+  address?: string | null
+  capacity: number
+  monthlyFee?: number | null
+  startDate?: string | null
+  schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
+  enrolledCount: number
+  remaining: number
+  waitlistCount: number
+  nextSession?: { date: string; startTime: string; endTime: string } | null
+  upcomingCount?: number
+  tutor: {
+    id: string
+    name: string
+    avatar?: string | null
+    profession?: string | null
+    district?: string | null
+    city?: string | null
+    isVerified?: boolean
+    avgRating?: number
+    reviewCount?: number
+  }
+}
+
+const DAY_FILTERS = [1, 2, 3, 4, 5, 6, 0]
+
 export function SearchPage() {
   const { view, navigate } = useApp()
   const initial = view.name === 'search' ? view : { subject: '', mode: '', district: '', lat: undefined, lng: undefined }
@@ -79,6 +114,14 @@ export function SearchPage() {
   const [tutors, setTutors] = useState<Tutor[]>([])
   const [loading, setLoading] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
+
+  // ===== Tab "Lớp học" (khám phá lớp nhóm — kiểu Airbnb Experiences) =====
+  const [resultTab, setResultTab] = useState<'tutors' | 'classes'>('tutors')
+  const [classDay, setClassDay] = useState<number | null>(null)
+  const [classMeetType, setClassMeetType] = useState<string>('')
+  const [classSort, setClassSort] = useState<'next' | 'fee_asc' | 'fee_desc' | 'seats'>('next')
+  const [classResults, setClassResults] = useState<ClassDiscoverItem[]>([])
+  const [classesLoading, setClassesLoading] = useState(false)
 
   // Locations data
   const [locations, setLocations] = useState<{ city: string; tutorCount: number; districts: { name: string; count: number }[] }[]>([])
@@ -228,6 +271,31 @@ export function SearchPage() {
     return () => { cancelled = true }
   }, [queryString])
 
+  // ===== Fetch lớp học nhóm khi tab "Lớp học" đang mở =====
+  useEffect(() => {
+    if (resultTab !== 'classes') return
+    let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setClassesLoading(true)
+    const params = new URLSearchParams()
+    if (search) params.set('q', search)
+    if (city) params.set('city', city)
+    if (classDay !== null) params.set('day', String(classDay))
+    if (classMeetType) params.set('meetingType', classMeetType)
+    params.set('sort', classSort)
+    fetch(`/api/classes/discover?${params.toString()}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return
+        setClassResults(data.classes || [])
+        setClassesLoading(false)
+      })
+      .catch(() => {
+        if (!cancelled) setClassesLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [resultTab, search, city, classDay, classMeetType, classSort])
+
   const activeFilterCount =
     (city ? 1 : 0) +
     (district ? 1 : 0) +
@@ -364,7 +432,33 @@ export function SearchPage() {
       {/* ============ STICKY SEARCH + CHIP LỌC NHANH ============ */}
       <div className="sticky top-16 z-30 bg-background/95 backdrop-blur border-b border-border/60">
         <div className="container mx-auto max-w-7xl px-4 py-3 space-y-2.5">
+          {/* Hàng 0: tab Gia sư 1-1 | Lớp học nhóm (kiểu Stays/Experiences của Airbnb) */}
+          <div className="flex items-center gap-1.5">
+            <button
+              className={`px-4 h-9 rounded-full text-sm font-bold transition-all ${
+                resultTab === 'tutors'
+                  ? 'bg-foreground text-background shadow-e1'
+                  : 'text-muted-foreground hover:text-foreground bg-muted/60'
+              }`}
+              onClick={() => setResultTab('tutors')}
+            >
+              <Users className="h-4 w-4 inline mr-1.5" /> Gia sư (1-1)
+            </button>
+            <button
+              className={`px-4 h-9 rounded-full text-sm font-bold transition-all ${
+                resultTab === 'classes'
+                  ? 'bg-foreground text-background shadow-e1'
+                  : 'text-muted-foreground hover:text-foreground bg-muted/60'
+              }`}
+              onClick={() => setResultTab('classes')}
+            >
+              <GraduationCap className="h-4 w-4 inline mr-1.5" /> Lớp học nhóm
+              <span className="ml-1.5 text-[10px] font-semibold bg-primary/10 text-primary rounded-full px-1.5 py-0.5">{classResults.length || ''}</span>
+            </button>
+          </div>
+
           {/* Hàng 1: search pill + tiện ích */}
+          {resultTab === 'tutors' && (
           <div className="flex gap-2 items-center">
             <div className="search-pill flex-1 max-w-2xl">
               <div className="flex items-center gap-2 flex-1 px-4">
@@ -434,8 +528,74 @@ export function SearchPage() {
               </TabsList>
             </Tabs>
           </div>
+          )}
 
-          {/* Hàng 2: chip lọc nhanh — kiểu danh mục Airbnb */}
+          {/* Hàng 1 (tab Lớp học): search pill đơn giản + lọc hình thức + ngày trong tuần */}
+          {resultTab === 'classes' && (
+            <div className="space-y-2.5">
+              <div className="flex gap-2 items-center">
+                <div className="search-pill flex-1 max-w-2xl">
+                  <div className="flex items-center gap-2 flex-1 px-4">
+                    <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <Input
+                      placeholder="Tên lớp, môn học, tên gia sư... (vd: Lớp Toán 10)"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="border-0 shadow-none focus-visible:ring-0 px-0 h-10 text-sm font-medium placeholder:font-normal"
+                    />
+                    {search && (
+                      <button onClick={() => setSearch('')} aria-label="Xóa từ khóa" className="text-muted-foreground hover:text-foreground">
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="pill-sep" />
+                  <div className="flex items-center px-4 min-w-[110px]">
+                    <select
+                      value={city}
+                      onChange={(e) => changeCity(e.target.value || '')}
+                      className="bg-transparent text-sm font-semibold outline-none cursor-pointer h-10 pr-5"
+                      aria-label="Thành phố"
+                    >
+                      <option value="">Mọi thành phố</option>
+                      {locations.map(loc => (
+                        <option key={loc.city} value={loc.city}>{loc.city} ({loc.tutorCount})</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground -ml-4 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+              <div className="row-scroll items-center" style={{ gap: '0.5rem' }}>
+                <span className="text-xs font-semibold text-muted-foreground shrink-0 pr-1">Học vào</span>
+                {DAY_FILTERS.map(d => (
+                  <button
+                    key={d}
+                    className={`chip ${classDay === d ? 'is-active' : ''}`}
+                    onClick={() => setClassDay(classDay === d ? null : d)}
+                  >
+                    {CLASS_DAY_NAMES[d]}
+                  </button>
+                ))}
+                <div className="w-px h-6 bg-border shrink-0" />
+                <button
+                  className={`chip ${classMeetType === 'AT_TUTOR_HOME' ? 'is-active' : ''}`}
+                  onClick={() => setClassMeetType(classMeetType === 'AT_TUTOR_HOME' ? '' : 'AT_TUTOR_HOME')}
+                >
+                  <Home className="h-4 w-4" /> Tại nhà gia sư
+                </button>
+                <button
+                  className={`chip ${classMeetType === 'ONLINE' ? 'is-active' : ''}`}
+                  onClick={() => setClassMeetType(classMeetType === 'ONLINE' ? '' : 'ONLINE')}
+                >
+                  <Video className="h-4 w-4" /> Trực tuyến
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Hàng 2: chip lọc nhanh — kiểu danh mục Airbnb (chỉ tab gia sư) */}
+          {resultTab === 'tutors' && (
           <div className="row-scroll items-center" style={{ gap: '0.5rem' }}>
             {LEVELS.map(l => (
               <button
@@ -471,11 +631,68 @@ export function SearchPage() {
               </button>
             ))}
           </div>
+          )}
         </div>
       </div>
 
       {/* ============ KẾT QUẢ ============ */}
       <div className="container mx-auto max-w-7xl px-4 py-5">
+        {/* ===== TAB LỚP HỌC NHÓM: kết quả lớp + sắp xếp riêng ===== */}
+        {resultTab === 'classes' ? (
+          <>
+            <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+              <h2 className="text-lg font-extrabold">
+                {classesLoading ? 'Đang tìm...' : `${classResults.length} lớp học nhóm đang tuyển`}
+              </h2>
+              <select
+                value={classSort}
+                onChange={(e) => setClassSort(e.target.value as any)}
+                className="text-sm font-semibold border rounded-full px-3.5 py-2 bg-background cursor-pointer"
+                aria-label="Sắp xếp lớp học"
+              >
+                <option value="next">Buổi khai giảng sớm nhất</option>
+                <option value="fee_asc">Học phí thấp → cao</option>
+                <option value="fee_desc">Học phí cao → thấp</option>
+                <option value="seats">Còn nhiều chỗ nhất</option>
+              </select>
+            </div>
+
+            {classesLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Card key={i} className="p-0 overflow-hidden">
+                    <div className="aspect-[16/9] skeleton-shimmer" />
+                    <div className="p-4 space-y-2">
+                      <div className="h-4 rounded skeleton-shimmer w-2/3" />
+                      <div className="h-3 rounded skeleton-shimmer w-1/2" />
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : classResults.length === 0 ? (
+              <Card className="p-12 text-center rounded-2xl">
+                <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                <h3 className="font-bold text-lg mb-1">Không tìm thấy lớp học phù hợp</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Thử bỏ lọc ngày/hình thức hoặc đổi từ khóa — hoặc dùng tab Gia sư (1-1)
+                </p>
+                <Button
+                  variant="outline" className="rounded-full"
+                  onClick={() => { setClassDay(null); setClassMeetType(''); setSearch(''); setCity('') }}
+                >
+                  Xóa bộ lọc
+                </Button>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {classResults.map(cls => (
+                  <ClassCard key={cls.id} cls={cls} onSelect={() => navigate({ name: 'tutor', id: cls.tutorId, classId: cls.id })} />
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+        <>
         {/* Toolbar */}
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <div className="flex items-center gap-2.5">
@@ -648,6 +865,8 @@ export function SearchPage() {
             </div>
           </div>
         )}
+        </>
+        )}
       </div>
 
       {/* Sheet bộ lọc chi tiết (mobile-first) */}
@@ -665,5 +884,113 @@ export function SearchPage() {
         </SheetContent>
       </Sheet>
     </div>
+  )
+}
+
+// ===== Card lớp học nhóm — tab "Lớp học" (phong cách Experiences của Airbnb) =====
+function ClassCard({ cls, onSelect }: { cls: ClassDiscoverItem; onSelect: () => void }) {
+  const full = cls.remaining <= 0
+  return (
+    <Card
+      className="p-0 overflow-hidden cursor-pointer card-lift group"
+      onClick={onSelect}
+    >
+      {/* Cover — gradient theo môn học + icon lớp nhóm */}
+      <div className="aspect-[16/9] bg-gradient-to-br from-primary/80 via-primary/60 to-rose-400/70 relative flex items-center justify-center">
+        <GraduationCap className="h-12 w-12 text-white/90 drop-shadow" />
+        <div className="absolute top-3 left-3 flex gap-1.5">
+          <Badge className="bg-white/90 text-foreground border-0 text-[10px] font-bold gap-1">
+            <Users className="h-3 w-3" /> Lớp nhóm
+          </Badge>
+          {cls.gradeLevel && (
+            <Badge className="bg-white/90 text-foreground border-0 text-[10px] font-bold">{cls.gradeLevel}</Badge>
+          )}
+        </div>
+        {/* Sĩ số còn trống / danh sách chờ */}
+        <div className="absolute bottom-3 right-3">
+          {full ? (
+            <Badge className="bg-rose-600 text-white border-0 text-[10px] font-bold gap-1">
+              <Hourglass className="h-3 w-3" /> Đã đủ — vào danh sách chờ
+            </Badge>
+          ) : (
+            <Badge className="bg-emerald-600 text-white border-0 text-[10px] font-bold gap-1">
+              <Users className="h-3 w-3" /> Còn {cls.remaining} chỗ
+            </Badge>
+          )}
+        </div>
+        {cls.meetingType === 'ONLINE' && (
+          <div className="absolute bottom-3 left-3">
+            <Badge className="bg-violet-600 text-white border-0 text-[10px] font-bold gap-1">
+              <Video className="h-3 w-3" /> Trực tuyến
+            </Badge>
+          </div>
+        )}
+      </div>
+
+      <div className="p-4 space-y-2.5">
+        <div>
+          <h3 className="font-bold text-base truncate group-hover:text-primary transition-colors">
+            {cls.title}
+          </h3>
+          <p className="text-xs text-muted-foreground truncate">
+            {cls.subject.name} · {cls.tutor.name}
+            {cls.tutor.isVerified && <BadgeCheck className="h-3 w-3 inline ml-0.5 text-primary" />}
+          </p>
+        </div>
+
+        {/* Đánh giá gia sư */}
+        {(cls.tutor.reviewCount ?? 0) > 0 && (
+          <div className="flex items-center gap-1">
+            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+            <span className="text-xs font-bold">{(cls.tutor.avgRating ?? 0).toFixed(1)}</span>
+            <span className="text-[10px] text-muted-foreground">({cls.tutor.reviewCount})</span>
+            {cls.tutor.district && (
+              <span className="text-[10px] text-muted-foreground ml-1">· {cls.tutor.district}, {cls.tutor.city}</span>
+            )}
+          </div>
+        )}
+
+        {/* Lịch học tuần */}
+        <div className="flex flex-wrap gap-1">
+          {sortClassSlots(cls.schedule).slice(0, 3).map((s, i) => (
+            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 text-[10px] font-semibold">
+              <Clock className="h-2.5 w-2.5" />
+              {CLASS_DAY_NAMES[s.dayOfWeek]} {s.startTime}
+            </span>
+          ))}
+        </div>
+
+        {/* Buổi tới */}
+        {cls.nextSession ? (
+          <p className="text-[11px] text-primary font-medium flex items-center gap-1">
+            <CalendarClock className="h-3 w-3 shrink-0" />
+            Buổi tới: {formatDate(cls.nextSession.date)} · {cls.nextSession.startTime}
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+            <CalendarClock className="h-3 w-3" /> Lịch sắp xếp khi vào lớp
+          </p>
+        )}
+
+        {/* Học phí */}
+        <div className="flex items-end justify-between pt-1">
+          <div>
+            {cls.monthlyFee != null ? (
+              <>
+                <span className="font-extrabold text-primary text-lg">{formatVnd(cls.monthlyFee)}</span>
+                <span className="text-xs text-muted-foreground">/tháng</span>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">Học phí thỏa thuận</span>
+            )}
+          </div>
+          {(cls.waitlistCount ?? 0) > 0 && (
+            <span className="text-[10px] text-violet-600 flex items-center gap-1">
+              <Hourglass className="h-3 w-3" /> {cls.waitlistCount} chờ chỗ
+            </span>
+          )}
+        </div>
+      </div>
+    </Card>
   )
 }
