@@ -29,6 +29,7 @@ export async function GET(_req: NextRequest) {
         orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
         include: { attendance: true },
       },
+      feePayments: true,
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -64,6 +65,7 @@ export async function GET(_req: NextRequest) {
           orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
           include: { attendance: true },
         },
+        feePayments: true,
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -71,10 +73,15 @@ export async function GET(_req: NextRequest) {
 
   const today = new Date()
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const currentPeriod = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
 
   return NextResponse.json({
     classes: (fresh ?? classes).map(c => {
       const upcoming = c.sessions.filter(s => s.status === 'SCHEDULED' && s.date >= todayStr)
+      const approvedCount = c.enrollments.filter(e => e.status === 'APPROVED').length
+      const paidThisMonth = new Set(
+        c.feePayments.filter(p => p.period === currentPeriod).map(p => p.enrollmentId),
+      )
       return {
         id: c.id,
         title: c.title,
@@ -109,11 +116,23 @@ export async function GET(_req: NextRequest) {
           endTime: s.endTime,
           status: s.status,
           note: s.note,
+          makeupForId: s.makeupForId,
           attendance: s.attendance.map(a => ({
             studentParentId: a.studentParentId,
             status: a.status,
             markedAt: a.markedAt,
           })),
+        })),
+        // Sổ học phí — dùng cho tab "Học phí" trong dialog quản lý lớp
+        feePayments: c.feePayments.map(p => ({
+          id: p.id,
+          enrollmentId: p.enrollmentId,
+          studentParentId: p.studentParentId,
+          period: p.period,
+          amount: p.amount,
+          method: p.method,
+          note: p.note,
+          paidAt: p.paidAt,
         })),
         // Thống kê nhanh cho panel
         stats: {
@@ -123,6 +142,8 @@ export async function GET(_req: NextRequest) {
             : null,
           completedCount: c.sessions.filter(s => s.status === 'COMPLETED').length,
           cancelledCount: c.sessions.filter(s => s.status === 'CANCELLED').length,
+          // Học phí tháng hiện tại chưa thu (chỉ meaningful khi lớp có monthlyFee)
+          feeUnpaidCurrent: Math.max(0, approvedCount - paidThisMonth.size),
         },
       }
     }),

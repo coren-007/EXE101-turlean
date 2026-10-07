@@ -10,7 +10,9 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { checkSessionReschedule } from '@/lib/class-sessions'
-import { notifyStudentsSessionRescheduled, notifyStudentsSessionCancelled } from '@/lib/notify'
+import {
+  notifyStudentsSessionRescheduled, notifyStudentsSessionCancelled, notifyStudentsMakeupScheduled,
+} from '@/lib/notify'
 import { formatDate } from '@/lib/format'
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -22,6 +24,14 @@ const patchSchema = z.object({
   startTime: z.string().regex(TIME_RE, 'Giờ không hợp lệ').optional(),
   endTime: z.string().regex(TIME_RE, 'Giờ không hợp lệ').optional(),
   reason: z.string().trim().max(300, 'Lý do tối đa 300 ký tự').optional(),
+  // Buổi dạy bù đi kèm nghỉ buổi (tùy chọn)
+  makeup: z
+    .object({
+      date: z.string().regex(DATE_RE, 'Ngày dạy bù không hợp lệ'),
+      startTime: z.string().regex(TIME_RE, 'Giờ dạy bù không hợp lệ'),
+      endTime: z.string().regex(TIME_RE, 'Giờ dạy bù không hợp lệ'),
+    })
+    .optional(),
 })
 
 export async function PATCH(
@@ -75,16 +85,73 @@ export async function PATCH(
     .filter(e => e.status === 'APPROVED')
     .map(e => ({ id: e.studentParent.id, name: e.studentParent.name }))
 
-  // ===== Hành động: NGHỈ BUỔI =====
+  // ===== Hành động: NGHỈ BUỔI (kèm tùy chọn xếp buổi DẠY BÙ) =====
   if (body.action === 'cancel') {
     const reason = body.reason?.trim() ?? ''
     if (reason.length < 5) {
       return NextResponse.json({ error: 'Vui lòng nhập lý do nghỉ buổi (tối thiểu 5 ký tự)' }, { status: 400 })
     }
+
+    // Xếp buổi dạy bù đi kèm — validate + check conflict TRƯỚC khi hủy buổi gốc
+    if (body.makeup) {
+      const mu = body.makeup
+      if (mu.startTime >= mu.endTime) {
+        return NextResponse.json({ error: 'Giờ bắt đầu buổi bù phải trước giờ kết thúc' }, { status: 400 })
+      }
+      if (mu.date === session.date && mu.startTime === session.startTime) {
+        return NextResponse.json({ error: 'Buổi dạy bù trùng đúng buổi đang nghỉ — chọn ngày/giờ khác' }, { status: 400 })
+      }
+      if (new Date(`${mu.date}T${mu.startTime}`).getTime() < Date.now()) {
+        return NextResponse.json({ error: 'Không thể xếp buổi bù vào thời gian đã qua' }, { status: 400 })
+      }
+      // Trùng buổi khác? (exclude buổi gốc — nó sắp bị hủy)
+      const conflict = await checkSessionReschedule(user.id, sessionId, mu.date, mu.startTime, mu.endTime)
+      if (conflict) {
+        return NextResponse.json({ error: `Không thể xếp buổi bù — ${conflict}` }, { status: 409 })
+      }
+      const existed = await db.classSession.findFirst({
+        where: { classId: session.classId, date: mu.date, startTime: mu.startTime },
+      })
+      if (existed) {
+        return NextResponse.json({ error: 'Lớp đã có buổi cùng ngày cùng giờ này' }, { status: 409 })
+      }
+    }
+
     const updated = await db.classSession.update({
       where: { id: sessionId },
       data: { status: 'CANCELLED', note: reason },
     })
+
+    if (body.makeup) {
+      const makeupSession = await db.classSession.create({
+        data: {
+          classId: session.classId,
+          date: body.makeup.date,
+          startTime: body.makeup.startTime,
+          endTime: body.makeup.endTime,
+          status: 'SCHEDULED',
+          makeupForId: sessionId,
+          note: `Dạy bù cho buổi ${formatDate(session.date)} (${reason})`,
+        },
+      })
+      await notifyStudentsMakeupScheduled({
+        tutorId: session.class.tutorId,
+        tutorName: session.class.tutor.name,
+        classTitle: session.class.title,
+        oldDate: formatDate(session.date),
+        oldTime: session.startTime,
+        newDate: formatDate(body.makeup.date),
+        newTime: `${body.makeup.startTime}–${body.makeup.endTime}`,
+        reason,
+        students: approvedStudents,
+      }).catch(() => {})
+      return NextResponse.json({
+        session: updated,
+        makeupSession,
+        message: `Đã nghỉ buổi ${formatDate(session.date)} và xếp DẠY BÙ sang ${formatDate(body.makeup.date)} ${body.makeup.startTime} — học sinh đã nhận thông báo`,
+      })
+    }
+
     await notifyStudentsSessionCancelled({
       tutorId: session.class.tutorId,
       tutorName: session.class.tutor.name,

@@ -11,12 +11,90 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { notifyTutorNewEnrollment, notifyTutorNewWaitlist } from '@/lib/notify'
-import { formatClassSchedule } from '@/lib/format'
+import { formatClassSchedule, CLASS_DAY_NAMES } from '@/lib/format'
 
 const enrollSchema = z.object({
   studentName: z.string().trim().max(80).optional().nullable(),
   note: z.string().trim().max(500, 'Lời nhắn tối đa 500 ký tự').optional().nullable(),
+  // force = true: đã xem cảnh báo trùng lịch và vẫn muốn đăng ký
+  force: z.boolean().optional(),
 })
+
+function todayISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function addDaysISO(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Cảnh báo trùng lịch cho PHỤ HUYNH/HỌC SINH: lịch tuần của lớp sắp đăng ký có
+ * trùng buổi lớp nhóm khác (đang học) hoặc buổi 1-1 đã đặt trong 8 tuần tới không.
+ * Trả về danh sách mô tả trùng (rỗng = không trùng). KHÔNG chặn — chỉ cảnh báo,
+ * người dùng có thể xác nhận đăng ký tiếp (force).
+ */
+async function findStudentScheduleConflicts(
+  studentId: string,
+  slots: { dayOfWeek: number; startTime: string; endTime: string }[],
+  excludeClassId: string,
+): Promise<string[]> {
+  if (slots.length === 0) return []
+  const today = todayISO()
+  const until = addDaysISO(today, 56)
+  const conflicts: string[] = []
+
+  // (a) Lớp nhóm khác mà học sinh đang APPROVED
+  const otherEnrollments = await db.classEnrollment.findMany({
+    where: {
+      studentParentId: studentId,
+      status: 'APPROVED',
+      class: { id: { not: excludeClassId }, status: { in: ['OPEN', 'PAUSED'] } },
+    },
+    include: {
+      class: {
+        select: { title: true, schedule: true },
+      },
+    },
+  })
+  for (const oe of otherEnrollments) {
+    // So khung giờ tuần trước — trùng slot nghĩa là trùng mọi tuần
+    for (const os of oe.class.schedule) {
+      for (const ns of slots) {
+        if (os.dayOfWeek === ns.dayOfWeek && os.startTime < ns.endTime && ns.startTime < os.endTime) {
+          conflicts.push(
+            `Trùng lịch với lớp "${oe.class.title}" — ${CLASS_DAY_NAMES[os.dayOfWeek]} ${os.startTime}–${os.endTime}`,
+          )
+        }
+      }
+    }
+  }
+
+  // (b) Buổi 1-1 đã đặt (PENDING/CONFIRMED) trong 8 tuần tới
+  const bookings = await db.booking.findMany({
+    where: {
+      studentId,
+      status: { in: ['PENDING', 'CONFIRMED'] },
+      date: { gte: today, lte: until },
+    },
+    include: { subject: { select: { name: true } }, tutor: { select: { name: true } } },
+  })
+  for (const b of bookings) {
+    const dow = new Date(`${b.date}T00:00:00`).getDay()
+    for (const ns of slots) {
+      if (ns.dayOfWeek === dow && ns.startTime < b.endTime && b.startTime < ns.endTime) {
+        conflicts.push(
+          `Trùng buổi 1-1 ${b.subject.name} với gia sư ${b.tutor.name} — ${b.date} ${b.startTime}–${b.endTime}`,
+        )
+      }
+    }
+  }
+
+  return [...new Set(conflicts)].slice(0, 6)
+}
 
 export async function POST(
   req: NextRequest,
@@ -101,6 +179,22 @@ export async function POST(
       },
       { status: 400 },
     )
+  }
+
+  // CẢNH BÁO TRÙNG LỊCH: lịch tuần lớp này có chồng lấn lịch học đang có của
+  // phụ huynh/học sinh (lớp nhóm khác + buổi 1-1 trong 8 tuần tới) → 409 kèm
+  // danh sách để frontend hỏi xác nhận; force=true thì cho đăng ký tiếp.
+  if (!parsed.data.force) {
+    const conflicts = await findStudentScheduleConflicts(user.id, cls.schedule, cls.id)
+    if (conflicts.length > 0) {
+      return NextResponse.json(
+        {
+          error: 'Lịch lớp này đang trùng với lịch học đã có của bạn',
+          conflicts,
+        },
+        { status: 409 },
+      )
+    }
   }
 
   // Còn chỗ → PENDING chờ duyệt; hết chỗ → WAITLIST danh sách chờ (tự động vào lớp khi có chỗ)

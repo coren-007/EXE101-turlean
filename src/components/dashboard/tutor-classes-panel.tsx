@@ -21,7 +21,7 @@ import {
   PlayCircle, CheckCircle2, CalendarDays, Wallet, Video, Home as HomeIcon,
   Info, UserCheck, UserX, XCircle, Ban, CalendarClock, ClipboardCheck,
   CalendarOff, RotateCcw, Download, Hourglass, ChevronDown, ChevronUp,
-  MoreHorizontal, ChevronRight, Zap,
+  MoreHorizontal, ChevronRight, Zap, Repeat,
 } from 'lucide-react'
 import { formatVnd, formatDate, timeAgo, CLASS_DAY_NAMES, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -67,7 +67,19 @@ interface ClassSessionItem {
   endTime: string
   status: string // SCHEDULED | COMPLETED | CANCELLED
   note?: string | null
+  makeupForId?: string | null // id của buổi gốc nếu là buổi DẠY BÙ
   attendance: SessionAttendance[]
+}
+
+interface FeePayment {
+  id: string
+  enrollmentId: string
+  studentParentId: string
+  period: string // YYYY-MM
+  amount: number
+  method: string // CASH | BANK | MOMO | OTHER
+  note: string | null
+  paidAt: string
 }
 
 interface Enrollment {
@@ -95,11 +107,13 @@ interface GroupClass {
   schedule: Slot[]
   enrollments: Enrollment[]
   sessions: ClassSessionItem[]
+  feePayments: FeePayment[]
   stats: {
     upcomingCount: number
     nextSession: { date: string; startTime: string; endTime: string } | null
     completedCount: number
     cancelledCount: number
+    feeUnpaidCurrent?: number // học sinh chưa đóng học phí tháng hiện tại
   }
 }
 
@@ -143,6 +157,22 @@ const dateKeyNow = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+const addDaysISO = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Số tiền gọn cho ô ma trận học phí (1,6tr / 300k)
+const feeShort = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1).replace('.0', '')}tr`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return `${n}`
+}
+
+// Nhãn tháng gọn: 2026-10 → T10/26
+const monthLabel = (per: string) => `T${Number(per.slice(5))}/${per.slice(2, 4)}`
+
 // Buổi đã đến giờ bắt đầu (đủ điều kiện điểm danh)
 const isSessionStarted = (s: ClassSessionItem) =>
   new Date(`${s.date}T${s.startTime}`).getTime() <= Date.now()
@@ -174,12 +204,12 @@ export function TutorClassesPanel() {
 
   // Dialog quản lý lớp (classId | null) — dữ liệu luôn lấy mới từ `classes`
   const [manageTarget, setManageTarget] = useState<string | null>(null)
-  const [manageTab, setManageTab] = useState<'students' | 'sessions'>('students')
+  const [manageTab, setManageTab] = useState<'students' | 'sessions' | 'fees'>('students')
   const [showAllPast, setShowAllPast] = useState<Record<string, boolean>>({})
 
   // Dialog điểm danh
   const [attendanceTarget, setAttendanceTarget] = useState<{ cls: GroupClass; session: ClassSessionItem } | null>(null)
-  const [attendanceMarks, setAttendanceMarks] = useState<Record<string, 'PRESENT' | 'ABSENT'>>({})
+  const [attendanceMarks, setAttendanceMarks] = useState<Record<string, 'PRESENT' | 'LATE' | 'ABSENT'>>({})
   const [submittingAttendance, setSubmittingAttendance] = useState(false)
 
   // Dialog dời buổi (dạy bù)
@@ -187,10 +217,17 @@ export function TutorClassesPanel() {
   const [rescheduleForm, setRescheduleForm] = useState({ date: '', startTime: '', endTime: '', reason: '' })
   const [submittingReschedule, setSubmittingReschedule] = useState(false)
 
-  // Dialog nghỉ buổi
+  // Dialog nghỉ buổi (+ tùy chọn xếp buổi DẠY BÙ thay thế)
   const [cancelSessionTarget, setCancelSessionTarget] = useState<{ cls: GroupClass; session: ClassSessionItem } | null>(null)
   const [cancelSessionReason, setCancelSessionReason] = useState('')
   const [submittingCancelSession, setSubmittingCancelSession] = useState(false)
+  const [makeupEnabled, setMakeupEnabled] = useState(false)
+  const [makeupForm, setMakeupForm] = useState({ date: '', startTime: '', endTime: '' })
+
+  // Dialog ghi nhận học phí (sổ học phí theo tháng)
+  const [feeTarget, setFeeTarget] = useState<{ cls: GroupClass; enrollment: Enrollment; period: string } | null>(null)
+  const [feeForm, setFeeForm] = useState({ amount: '', method: 'CASH', note: '' })
+  const [submittingFee, setSubmittingFee] = useState(false)
 
   const load = async () => {
     const [clsData, subjData] = await Promise.all([
@@ -209,7 +246,7 @@ export function TutorClassesPanel() {
   // Dialog quản lý lớp — luôn đọc bản mới nhất sau mỗi thao tác
   const managed = manageTarget ? classes.find(c => c.id === manageTarget) ?? null : null
 
-  const openManage = (cls: GroupClass, tab: 'students' | 'sessions' = 'students') => {
+  const openManage = (cls: GroupClass, tab: 'students' | 'sessions' | 'fees' = 'students') => {
     setManageTarget(cls.id)
     setManageTab(tab)
   }
@@ -407,10 +444,10 @@ export function TutorClassesPanel() {
       return
     }
     // Mặc định: ai đã được điểm danh trước đó giữ nguyên, học sinh mới mặc định CÓ MẶT
-    const marks: Record<string, 'PRESENT' | 'ABSENT'> = {}
+    const marks: Record<string, 'PRESENT' | 'LATE' | 'ABSENT'> = {}
     for (const e of approved) {
       const existing = session.attendance.find(a => a.studentParentId === e.parent.id)
-      marks[e.parent.id] = (existing?.status as 'PRESENT' | 'ABSENT') ?? 'PRESENT'
+      marks[e.parent.id] = (existing?.status as 'PRESENT' | 'LATE' | 'ABSENT') ?? 'PRESENT'
     }
     setAttendanceMarks(marks)
     setAttendanceTarget({ cls, session })
@@ -494,12 +531,32 @@ export function TutorClassesPanel() {
     }
   }
 
-  // ===== Nghỉ buổi =====
+  // ===== Nghỉ buổi (+ tùy chọn xếp buổi DẠY BÙ) =====
+  const openCancelSession = (cls: GroupClass, session: ClassSessionItem) => {
+    setCancelSessionTarget({ cls, session })
+    setCancelSessionReason('')
+    setMakeupEnabled(false)
+    // Gợi ý buổi bù: cùng giờ, 1 tuần sau
+    setMakeupForm({ date: addDaysISO(session.date, 7), startTime: session.startTime, endTime: session.endTime })
+  }
+
   const submitCancelSession = async () => {
     if (!cancelSessionTarget) return
     if (cancelSessionReason.trim().length < 5) {
       toast.error('Vui lòng nhập lý do nghỉ buổi (tối thiểu 5 ký tự)')
       return
+    }
+    let makeup: { date: string; startTime: string; endTime: string } | undefined
+    if (makeupEnabled) {
+      if (!makeupForm.date || !makeupForm.startTime || !makeupForm.endTime) {
+        toast.error('Chọn đủ ngày và giờ cho buổi dạy bù')
+        return
+      }
+      if (makeupForm.startTime >= makeupForm.endTime) {
+        toast.error('Giờ bắt đầu buổi bù phải trước giờ kết thúc')
+        return
+      }
+      makeup = { date: makeupForm.date, startTime: makeupForm.startTime, endTime: makeupForm.endTime }
     }
     setSubmittingCancelSession(true)
     try {
@@ -508,7 +565,7 @@ export function TutorClassesPanel() {
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'cancel', reason: cancelSessionReason.trim() }),
+          body: JSON.stringify({ action: 'cancel', reason: cancelSessionReason.trim(), makeup }),
         },
       )
       const data = await res.json()
@@ -521,6 +578,70 @@ export function TutorClassesPanel() {
       toast.error(e.message || 'Hủy buổi thất bại')
     } finally {
       setSubmittingCancelSession(false)
+    }
+  }
+
+  // ===== Sổ học phí (ghi nhận / sửa / xóa 1 dòng đóng tiền) =====
+  const openFee = (cls: GroupClass, enrollment: Enrollment, period: string) => {
+    const existing = cls.feePayments.find(p => p.enrollmentId === enrollment.id && p.period === period)
+    setFeeForm({
+      amount: String(existing?.amount ?? cls.monthlyFee ?? 0),
+      method: existing?.method ?? 'CASH',
+      note: existing?.note ?? '',
+    })
+    setFeeTarget({ cls, enrollment, period })
+  }
+
+  const submitFee = async () => {
+    if (!feeTarget) return
+    const amount = Number(feeForm.amount)
+    if (isNaN(amount) || amount < 0) {
+      toast.error('Số tiền không hợp lệ')
+      return
+    }
+    setSubmittingFee(true)
+    try {
+      const res = await fetch(`/api/classes/${feeTarget.cls.id}/fees`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enrollmentId: feeTarget.enrollment.id,
+          period: feeTarget.period,
+          amount,
+          method: feeForm.method,
+          note: feeForm.note.trim() || null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast.success(data.message || 'Đã ghi nhận học phí', { duration: 5000 })
+      setFeeTarget(null)
+      load()
+    } catch (e: any) {
+      toast.error(e.message || 'Ghi nhận học phí thất bại')
+    } finally {
+      setSubmittingFee(false)
+    }
+  }
+
+  const deleteFee = async () => {
+    if (!feeTarget) return
+    const existing = feeTarget.cls.feePayments.find(
+      p => p.enrollmentId === feeTarget.enrollment.id && p.period === feeTarget.period,
+    )
+    if (!existing) return
+    setSubmittingFee(true)
+    try {
+      const res = await fetch(`/api/classes/${feeTarget.cls.id}/fees/${existing.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast.success(data.message || 'Đã xóa dòng học phí')
+      setFeeTarget(null)
+      load()
+    } catch (e: any) {
+      toast.error(e.message || 'Xóa thất bại')
+    } finally {
+      setSubmittingFee(false)
     }
   }
 
@@ -709,6 +830,11 @@ export function TutorClassesPanel() {
                           <Hourglass className="h-3 w-3" /> {waitlist.length} chờ chỗ
                         </Badge>
                       )}
+                      {cls.monthlyFee != null && !closed && (cls.stats?.feeUnpaidCurrent ?? 0) > 0 && (
+                        <Badge className="bg-amber-100 text-amber-700 border-0 text-[10px] gap-1" title="Học sinh trong lớp chưa đóng học phí tháng này">
+                          <Wallet className="h-3 w-3" /> {cls.stats!.feeUnpaidCurrent} chưa đóng tháng này
+                        </Badge>
+                      )}
                       {cls.status === 'OPEN' && cls.enrollDeadline && (
                         <Badge
                           className={`border-0 text-[10px] gap-1 ${
@@ -794,6 +920,7 @@ export function TutorClassesPanel() {
             const pending = managed.enrollments.filter(e => e.status === 'PENDING')
             const waitlist = managed.enrollments.filter(e => e.status === 'WAITLIST')
             const remaining = managed.capacity - approved.length
+            const feeUnpaid = managed.stats?.feeUnpaidCurrent ?? 0
             const today = dateKeyNow()
             const upcomingList = managed.sessions.filter(s => s.status === 'SCHEDULED' && s.date >= today)
             const pastSessions = managed.sessions.filter(s => s.date < today || s.status !== 'SCHEDULED')
@@ -829,8 +956,8 @@ export function TutorClassesPanel() {
                   </DialogDescription>
                 </DialogHeader>
 
-                <Tabs value={manageTab} onValueChange={(v) => setManageTab(v as 'students' | 'sessions')} className="flex-1 min-h-0 flex flex-col">
-                  <TabsList className="grid grid-cols-2 w-full">
+                <Tabs value={manageTab} onValueChange={(v) => setManageTab(v as 'students' | 'sessions' | 'fees')} className="flex-1 min-h-0 flex flex-col">
+                  <TabsList className="grid grid-cols-3 w-full">
                     <TabsTrigger value="students" className="gap-1.5 text-xs sm:text-sm">
                       <Users className="h-3.5 w-3.5" /> Học sinh
                       {pending.length > 0 && (
@@ -844,6 +971,14 @@ export function TutorClassesPanel() {
                       {upcomingList.length > 0 && (
                         <span className="h-4 min-w-4 px-1 rounded-full bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center">
                           {upcomingList.length}
+                        </span>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger value="fees" className="gap-1.5 text-xs sm:text-sm">
+                      <Wallet className="h-3.5 w-3.5" /> Học phí
+                      {feeUnpaid > 0 && (
+                        <span className="h-4 min-w-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center">
+                          {feeUnpaid}
                         </span>
                       )}
                     </TabsTrigger>
@@ -1002,6 +1137,11 @@ export function TutorClassesPanel() {
                                     {s.date === today && (
                                       <Badge className="bg-primary text-primary-foreground border-0 text-[10px]">Hôm nay</Badge>
                                     )}
+                                    {s.makeupForId && (
+                                      <Badge className="bg-sky-100 text-sky-700 border-0 text-[10px] gap-1" title="Buổi dạy bù thay cho buổi đã nghỉ">
+                                        <Repeat className="h-3 w-3" /> Dạy bù
+                                      </Badge>
+                                    )}
                                   </div>
                                   {s.note && <p className="text-[11px] text-muted-foreground mt-0.5 italic truncate">&quot;{s.note}&quot;</p>}
                                 </div>
@@ -1021,7 +1161,7 @@ export function TutorClassesPanel() {
                                   <Button
                                     size="sm" variant="ghost"
                                     className="h-7 text-xs text-destructive hover:text-destructive px-2"
-                                    onClick={() => { setCancelSessionTarget({ cls: managed, session: s }); setCancelSessionReason('') }}
+                                    onClick={() => openCancelSession(managed, s)}
                                     title="Nghỉ đúng buổi này"
                                   >
                                     <CalendarOff className="h-3.5 w-3.5" />
@@ -1046,6 +1186,7 @@ export function TutorClassesPanel() {
                           <div className="space-y-1">
                             {pastShown.slice().reverse().map(s => {
                               const present = s.attendance.filter(a => a.status === 'PRESENT').length
+                              const late = s.attendance.filter(a => a.status === 'LATE').length
                               const absent = s.attendance.filter(a => a.status === 'ABSENT').length
                               return (
                                 <div key={s.id} className="flex items-center gap-2.5 p-2 rounded-lg bg-muted/30 flex-wrap">
@@ -1059,7 +1200,9 @@ export function TutorClassesPanel() {
                                     </div>
                                     {s.status === 'COMPLETED' && (
                                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                                        {present} có mặt · {absent} vắng
+                                        {present} có mặt
+                                        {late > 0 && ` · ${late} muộn`}
+                                        {absent > 0 && ` · ${absent} vắng`}
                                         {absent > 0 && (
                                           <span className="text-rose-600">
                                             {' '}vắng: {managed.enrollments
@@ -1114,6 +1257,118 @@ export function TutorClassesPanel() {
                           <PencilLine className="h-3.5 w-3.5 mr-1" /> Sửa lịch tuần
                         </Button>
                       </div>
+                    </TabsContent>
+
+                    {/* ===== TAB HỌC PHÍ — ma trận học sinh × tháng ===== */}
+                    <TabsContent value="fees" className="mt-0 space-y-3">
+                      {(() => {
+                        const now = dateKeyNow().slice(0, 7)
+                        // Tháng tính phí: từ tháng bắt đầu (muộn nhất giữa khai giảng /
+                        // buổi đầu tiên / người đầu vào lớp) đến tháng hiện tại
+                        const starts: string[] = []
+                        if (managed.startDate) starts.push(managed.startDate.slice(0, 7))
+                        if (managed.sessions[0]?.date) starts.push(managed.sessions[0].date.slice(0, 7))
+                        if (approved[0]?.createdAt) starts.push(approved[0].createdAt.slice(0, 7))
+                        const months: string[] = []
+                        if (starts.length > 0) {
+                          let [y, m] = starts.reduce((a, b) => (a > b ? a : b)).split('-').map(Number)
+                          const [ny, nm] = now.split('-').map(Number)
+                          while (y < ny || (y === ny && m <= nm)) {
+                            months.push(`${y}-${String(m).padStart(2, '0')}`)
+                            m++
+                            if (m > 12) { m = 1; y++ }
+                          }
+                        }
+                        const byKey = new Map(managed.feePayments.map(p => [`${p.enrollmentId}|${p.period}`, p]))
+                        const paidNow = new Set(managed.feePayments.filter(p => p.period === now).map(p => p.enrollmentId))
+                        const unpaidNow = approved.length - paidNow.size
+                        const totalCollected = managed.feePayments.reduce((s, p) => s + p.amount, 0)
+
+                        if (managed.monthlyFee == null) {
+                          return (
+                            <div className="p-4 rounded-xl border border-dashed text-center">
+                              <Wallet className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                              <p className="text-sm font-semibold mb-1">Chưa đặt học phí tháng</p>
+                              <p className="text-xs text-muted-foreground mb-3 max-w-xs mx-auto">
+                                Đặt “Học phí theo tháng” khi sửa lớp để bắt đầu ghi nhận đóng tiền từng học sinh theo từng tháng.
+                              </p>
+                              <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={() => openEdit(managed)}>
+                                <PencilLine className="h-3.5 w-3.5 mr-1" /> Sửa lớp
+                              </Button>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <>
+                            <p className="text-xs text-muted-foreground">
+                              Tháng này (<b>{monthLabel(now)}</b>):{' '}
+                              {unpaidNow === 0
+                                ? <span className="text-emerald-600 font-semibold">đã thu đủ {approved.length}/{approved.length}</span>
+                                : <span className="text-amber-600 font-semibold">còn {unpaidNow}/{approved.length} chưa thu</span>}
+                              {' '}· đã thu tất cả <b>{formatVnd(totalCollected)}</b>
+                            </p>
+                            {approved.length === 0 || months.length === 0 ? (
+                              <p className="text-sm text-muted-foreground py-4 text-center">
+                                {approved.length === 0
+                                  ? 'Lớp chưa có học sinh nào đã vào lớp.'
+                                  : 'Lớp chưa khai giảng — chưa tới kỳ thu học phí.'}
+                              </p>
+                            ) : (
+                              <div className="overflow-x-auto scroll-area -mx-1 px-1 pb-1">
+                                <table className="text-xs border-separate border-spacing-y-1 w-max min-w-full">
+                                  <thead>
+                                    <tr>
+                                      <th className="text-left font-semibold text-muted-foreground pl-2 pr-4 whitespace-nowrap">Học sinh</th>
+                                      {months.map(per => (
+                                        <th key={per} className={`font-semibold px-1 pb-1 whitespace-nowrap ${per === now ? 'text-primary' : 'text-muted-foreground'}`}>
+                                          {monthLabel(per)}
+                                        </th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {approved.map(e => (
+                                      <tr key={e.id}>
+                                        <td className="pl-2 pr-4 py-1 max-w-[150px] truncate font-semibold" title={e.studentName ?? e.parent.name}>
+                                          {e.studentName ?? e.parent.name}
+                                        </td>
+                                        {months.map(per => {
+                                          const pay = byKey.get(`${e.id}|${per}`)
+                                          return (
+                                            <td key={per} className="px-0.5 py-0.5">
+                                              {pay ? (
+                                                <button
+                                                  className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-200 hover:bg-emerald-200 font-semibold whitespace-nowrap"
+                                                  title={`Đã thu ${formatVnd(pay.amount)}${pay.note ? ` — ${pay.note}` : ''} — bấm để sửa/xóa`}
+                                                  onClick={() => openFee(managed, e, per)}
+                                                >
+                                                  {feeShort(pay.amount)}
+                                                </button>
+                                              ) : (
+                                                <button
+                                                  className="px-2 py-1 rounded-lg border border-dashed text-muted-foreground hover:border-amber-400 hover:text-amber-600 whitespace-nowrap"
+                                                  title="Ghi nhận đã đóng học phí tháng này"
+                                                  onClick={() => openFee(managed, e, per)}
+                                                >
+                                                  {per === now ? '＋ Thu' : '—'}
+                                                </button>
+                                              )}
+                                            </td>
+                                          )
+                                        })}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                            <p className="text-[11px] text-muted-foreground">
+                              Bấm ô trống để ghi nhận đóng tiền · bấm ô xanh để sửa hoặc xóa — phụ huynh nhận thông báo sau mỗi lần ghi nhận.
+                            </p>
+                          </>
+                        )
+                      })()}
                     </TabsContent>
                   </div>
                 </Tabs>
@@ -1172,6 +1427,17 @@ export function TutorClassesPanel() {
                         }`}
                       >
                         Có mặt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceMarks(prev => ({ ...prev, [e.parent.id]: 'LATE' }))}
+                        className={`px-2.5 h-7 rounded-full text-xs font-semibold border transition-all ${
+                          mark === 'LATE'
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-background text-muted-foreground border-border hover:border-amber-400'
+                        }`}
+                      >
+                        Muộn
                       </button>
                       <button
                         type="button"
@@ -1295,10 +1561,117 @@ export function TutorClassesPanel() {
               onChange={(e) => setCancelSessionReason(e.target.value)}
             />
           </div>
+
+          {/* Xếp buổi DẠY BÙ thay thế ngay trong lúc nghỉ buổi */}
+          <div className="rounded-xl border p-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={makeupEnabled}
+                onChange={(e) => setMakeupEnabled(e.target.checked)}
+              />
+              Xếp ngay buổi DẠY BÙ thay thế
+            </label>
+            {makeupEnabled && (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <Label className="text-xs font-semibold mb-1 block">Ngày dạy bù *</Label>
+                    <Input type="date" value={makeupForm.date} onChange={(e) => setMakeupForm(p => ({ ...p, date: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold mb-1 block">Bắt đầu</Label>
+                    <Input type="time" value={makeupForm.startTime} onChange={(e) => setMakeupForm(p => ({ ...p, startTime: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold mb-1 block">Kết thúc</Label>
+                    <Input type="time" value={makeupForm.endTime} onChange={(e) => setMakeupForm(p => ({ ...p, endTime: e.target.value }))} />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Hệ thống tự chặn nếu buổi bù trùng lịch khác. Học sinh nhận thông báo “nghỉ buổi → dạy bù”.
+                </p>
+              </>
+            )}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCancelSessionTarget(null)}>Giữ lịch</Button>
             <Button variant="destructive" onClick={submitCancelSession} disabled={submittingCancelSession || cancelSessionReason.trim().length < 5}>
               {submittingCancelSession ? 'Đang xử lý...' : 'Xác nhận nghỉ buổi'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== Dialog ghi nhận học phí (sổ học phí theo tháng) ===== */}
+      <Dialog open={!!feeTarget} onOpenChange={(open) => !open && setFeeTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5 text-primary" /> Ghi nhận học phí tháng
+            </DialogTitle>
+            <DialogDescription>
+              {feeTarget && (
+                <>
+                  <b>{feeTarget.enrollment.studentName ?? feeTarget.enrollment.parent.name}</b> · lớp &quot;{feeTarget.cls.title}&quot; · kỳ{' '}
+                  {monthLabel(feeTarget.period)}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div>
+              <Label className="text-xs font-semibold mb-1 block">Số tiền đã thu (đồng) *</Label>
+              <Input
+                type="number"
+                min={0}
+                step={10000}
+                value={feeForm.amount}
+                onChange={(e) => setFeeForm(prev => ({ ...prev, amount: e.target.value }))}
+              />
+              {feeTarget?.cls.monthlyFee != null && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Học phí chuẩn: {formatVnd(feeTarget.cls.monthlyFee)}/tháng — chỉnh số tiền nếu miễn giảm / đóng thiếu.
+                </p>
+              )}
+            </div>
+            <div>
+              <Label className="text-xs font-semibold mb-1 block">Hình thức</Label>
+              <select
+                className="w-full h-10 px-3 border rounded-lg bg-background text-sm"
+                value={feeForm.method}
+                onChange={(e) => setFeeForm(prev => ({ ...prev, method: e.target.value }))}
+              >
+                <option value="CASH">Tiền mặt</option>
+                <option value="BANK">Chuyển khoản</option>
+                <option value="MOMO">Ví MoMo</option>
+                <option value="OTHER">Khác</option>
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold mb-1 block">Ghi chú (tùy chọn)</Label>
+              <Input
+                placeholder="vd: đóng đủ, miễn tháng..."
+                value={feeForm.note}
+                onChange={(e) => setFeeForm(prev => ({ ...prev, note: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-1">
+            {feeTarget && (() => {
+              const existing = feeTarget.cls.feePayments.find(
+                p => p.enrollmentId === feeTarget.enrollment.id && p.period === feeTarget.period,
+              )
+              return existing ? (
+                <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={deleteFee} disabled={submittingFee}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Xóa ghi nhận
+                </Button>
+              ) : null
+            })()}
+            <Button variant="outline" onClick={() => setFeeTarget(null)}>Đóng</Button>
+            <Button onClick={submitFee} disabled={submittingFee}>
+              {submittingFee ? 'Đang lưu...' : 'Ghi nhận'}
             </Button>
           </DialogFooter>
         </DialogContent>

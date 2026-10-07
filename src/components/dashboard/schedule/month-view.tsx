@@ -1,7 +1,7 @@
 'use client'
 
 import {
-  CalEvent, eventTitle, eventStart, eventDotClass, eventDate, dateKey,
+  CalEvent, HolidayItem, eventTitle, eventStart, eventDotClass, eventDate, dateKey,
 } from './schedule-shared'
 
 interface MonthViewProps {
@@ -10,13 +10,15 @@ interface MonthViewProps {
   events: CalEvent[]
   onEventClick: (e: CalEvent) => void
   onDayClick: (d: Date) => void
+  /** Ngày nghỉ lễ — tô đỏ ngày + hiện tên lễ nhỏ */
+  holidays?: HolidayItem[]
 }
 
 /**
  * Lịch tháng 6 tuần: mỗi ô là 1 ngày, mỗi buổi học là 1 chip màu click được.
  * Bấm vào ô trống để mở lịch tuần của ngày đó.
  */
-export function MonthView({ cells, monthKey, events, onEventClick, onDayClick }: MonthViewProps) {
+export function MonthView({ cells, monthKey, events, onEventClick, onDayClick, holidays }: MonthViewProps) {
   const todayKey = dateKey(new Date())
   const dayNames = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN']
 
@@ -39,6 +41,7 @@ export function MonthView({ cells, monthKey, events, onEventClick, onDayClick }:
             .sort((a, b) => eventStart(a).localeCompare(eventStart(b)))
           const visible = dayEvents.slice(0, 3)
           const more = dayEvents.length - visible.length
+          const holiday = holidays?.find(h => h.date === key)
 
           return (
             <button
@@ -51,6 +54,11 @@ export function MonthView({ cells, monthKey, events, onEventClick, onDayClick }:
               <p className={`text-xs font-bold mb-1 ${!inMonth ? 'text-muted-foreground/50' : isToday ? 'text-primary' : ''}`}>
                 {String(d.getDate()).padStart(2, '0')}
               </p>
+              {holiday && (
+                <p className="text-[9px] text-rose-600 font-semibold truncate" title={`Ngày nghỉ lễ: ${holiday.name}`}>
+                  {holiday.name}
+                </p>
+              )}
               <div className="space-y-0.5">
                 {visible.map(e => {
                   const id = e.kind === 'group' ? e.session.id : e.booking.id
@@ -69,6 +77,7 @@ export function MonthView({ cells, monthKey, events, onEventClick, onDayClick }:
                       <span className={`truncate ${cancelled ? 'line-through text-muted-foreground' : ''}`}>
                         <span className="font-semibold tabular-nums">{eventStart(e)}</span>{' '}
                         {e.kind === 'group' ? e.cls.title : e.booking.student.name}
+                        {e.kind === 'group' && e.session.makeupForId && <span className="font-semibold"> (bù)</span>}
                       </span>
                     </span>
                   )

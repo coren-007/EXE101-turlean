@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  CalEvent, GroupClass, BookingItem, ClassSessionItem,
+  CalEvent, GroupClass, BookingItem, ClassSessionItem, HolidayItem,
   dateKey, weekStartOf, addDays, addMonths, eventDate, eventStatus,
   isEventPast,
 } from './schedule-shared'
@@ -35,7 +35,7 @@ interface MyEnrollmentLite {
     monthlyFee: number | null
     status: string
     schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
-    sessions: { id: string; date: string; startTime: string; endTime: string; status: string; note?: string | null }[]
+    sessions: { id: string; date: string; startTime: string; endTime: string; status: string; note?: string | null; makeupForId?: string | null }[]
     tutor: { id: string; name: string; avatar?: string | null; profession?: string | null }
   }
   attendance?: { history: { id: string; status: string | null }[] }
@@ -52,6 +52,7 @@ export function StudentScheduleCalendar() {
 
   const [enrollments, setEnrollments] = useState<MyEnrollmentLite[]>([])
   const [bookings, setBookings] = useState<BookingItem[]>([])
+  const [holidays, setHolidays] = useState<HolidayItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
 
@@ -68,13 +69,15 @@ export function StudentScheduleCalendar() {
   const load = useCallback(async () => {
     if (!user) return
     try {
-      const [enrollData, bookingData] = await Promise.all([
+      const [enrollData, bookingData, holidayData] = await Promise.all([
         fetch('/api/enrollments/mine').then(r => r.json()),
         fetch('/api/bookings?role=student').then(r => r.json()),
+        fetch('/api/holidays').then(r => r.json()).catch(() => ({ holidays: [] })),
       ])
       if (enrollData?.error || bookingData?.error) throw new Error('load-failed')
       setEnrollments(enrollData.enrollments || [])
       setBookings(bookingData.bookings || [])
+      setHolidays(holidayData.holidays || [])
       setLoadError(false)
     } catch {
       setLoadError(true)
@@ -102,6 +105,7 @@ export function StudentScheduleCalendar() {
         endTime: s.endTime,
         status: s.status,
         note: s.note ?? null,
+        makeupForId: s.makeupForId ?? null,
         attendance: [],
       }))
       classes.push({
@@ -333,6 +337,7 @@ export function StudentScheduleCalendar() {
             showAvailability={false}
             oneLabel="subject"
             onEventClick={setDetailEvent}
+            holidays={holidays}
           />
         ) : (
           <MonthView
@@ -340,6 +345,7 @@ export function StudentScheduleCalendar() {
             monthKey={monthKey}
             events={filteredEvents}
             onEventClick={setDetailEvent}
+            holidays={holidays}
             onDayClick={d => {
               setMode('week')
               const x = new Date(d)

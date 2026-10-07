@@ -55,6 +55,19 @@ model User {
   groupClasses      GroupClass[]     @relation("GroupClassTutor")
   classEnrollments  ClassEnrollment[] @relation("ClassEnrollmentStudent")
   classAttendance   ClassAttendance[] @relation("ClassAttendanceStudent")
+  feePayments       ClassFeePayment[] @relation("ClassFeePaymentStudent")
+}
+
+// ===== Ngày nghỉ lễ toàn hệ thống =====
+// Sinh buổi học (ClassSession) sẽ BỎ QUA các ngày này; khi thêm ngày lễ mới,
+// các buổi tương lai trúng ngày tự động bị hủy (kèm thông báo cho học sinh).
+model Holiday {
+  id        String   @id @default(cuid())
+  date      String   // YYYY-MM-DD
+  name      String   // vd "Tết Nguyên Đán", "Quốc khánh"
+  createdAt DateTime @default(now())
+
+  @@unique([date])
 }
 
 model Subject {
@@ -211,6 +224,7 @@ model GroupClass {
   schedule     ClassScheduleSlot[]
   enrollments  ClassEnrollment[]
   sessions     ClassSession[]
+  feePayments  ClassFeePayment[]
 
   @@index([tutorId])
 }
@@ -242,6 +256,7 @@ model ClassEnrollment {
 
   class           GroupClass @relation(fields: [classId], references: [id], onDelete: Cascade)
   studentParent   User       @relation("ClassEnrollmentStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+  feePayments     ClassFeePayment[]
 
   @@unique([classId, studentParentId])
   @@index([classId])
@@ -269,22 +284,26 @@ model ClassSession {
   // SCHEDULED = chưa diễn ra | COMPLETED = đã điểm danh/hoàn thành | CANCELLED = nghỉ buổi
   status    String   @default("SCHEDULED")
   note      String?  // lý do nghỉ buổi / ghi chú dời buổi
+  // Buổi DẠY BÙ: id của buổi gốc đã nghỉ mà buổi này thay thế (null = buổi chính lịch)
+  makeupForId String? @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   class      GroupClass       @relation(fields: [classId], references: [id], onDelete: Cascade)
   attendance ClassAttendance[]
+  makeupFor  ClassSession?   @relation("MakeupSession", fields: [makeupForId], references: [id], onDelete: SetNull)
+  makeups    ClassSession[]  @relation("MakeupSession")
 
   @@index([classId, date])
   @@unique([classId, date, startTime])
 }
 
-// Điểm danh 1 học sinh trong 1 buổi học lớp nhóm (PRE/ABSENT)
+// Điểm danh 1 học sinh trong 1 buổi học lớp nhóm (PRE/ABSENT/LATE)
 model ClassAttendance {
   id              String   @id @default(cuid())
   sessionId       String
   studentParentId String
-  // PRESENT = có mặt | ABSENT = vắng mặt
+  // PRESENT = có mặt | LATE = đi muộn | ABSENT = vắng mặt
   status          String
   markedAt        DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -293,5 +312,29 @@ model ClassAttendance {
   studentParent User         @relation("ClassAttendanceStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, studentParentId])
+  @@index([studentParentId])
+}
+
+// ===== Sổ học phí lớp nhóm =====
+// Gia sư ghi nhận từng lần phụ huynh ĐÓNG học phí theo tháng (1 dòng / học sinh / tháng).
+// amount = số tiền thực thu (đồng) — cho phép khác monthlyFee (miễn giảm/thiếu/thêm).
+model ClassFeePayment {
+  id              String   @id @default(cuid())
+  classId         String
+  enrollmentId    String
+  studentParentId String
+  period          String   // YYYY-MM — tháng học phí
+  amount          Int      // số tiền đã thu (đồng)
+  method          String   @default("CASH") // CASH | BANK | MOMO | OTHER
+  note            String?
+  paidAt          DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  class         GroupClass      @relation(fields: [classId], references: [id], onDelete: Cascade)
+  enrollment    ClassEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  studentParent User            @relation("ClassFeePaymentStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, enrollmentId, period])
+  @@index([classId])
   @@index([studentParentId])
 }

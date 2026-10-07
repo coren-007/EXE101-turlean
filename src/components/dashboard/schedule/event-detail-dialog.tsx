@@ -62,6 +62,7 @@ export function EventDetailDialog(props: EventDetailDialogProps) {
     const waiting = cls.enrollments.filter(e => e.status === 'WAITLIST')
     const pending = cls.enrollments.filter(e => e.status === 'PENDING')
     const present = session.attendance.filter(a => a.status === 'PRESENT').length
+    const late = session.attendance.filter(a => a.status === 'LATE').length
     const absent = session.attendance.filter(a => a.status === 'ABSENT').length
     const started = isEventStarted(event)
     const status = session.status
@@ -85,6 +86,11 @@ export function EventDetailDialog(props: EventDetailDialogProps) {
               <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${STATUS_BADGE_CLASS[status] ?? 'bg-muted'}`}>
                 {STATUS_LABEL[status] ?? status}
               </span>
+              {session.makeupForId && (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700">
+                  Dạy bù
+                </span>
+              )}
               <span className="text-xs">{formatEventDate(session.date)}</span>
             </DialogDescription>
           </DialogHeader>
@@ -125,7 +131,12 @@ export function EventDetailDialog(props: EventDetailDialogProps) {
               <InfoRow
                 icon={ClipboardCheck}
                 label="Điểm danh"
-                value={<span className={absent > 0 ? '' : 'text-emerald-600'}>{present} có mặt · {absent} vắng</span>}
+                value={
+                  <span className={absent > 0 ? '' : 'text-emerald-600'}>
+                    {present} có mặt{late > 0 && ` · ${late} muộn`}
+                    {absent > 0 && ` · ${absent} vắng`}
+                  </span>
+                }
               />
             )}
             {session.note && (

@@ -19,7 +19,15 @@ export interface ClassSessionItem {
   endTime: string // HH:MM
   status: string // SCHEDULED | COMPLETED | CANCELLED
   note?: string | null
+  makeupForId?: string | null // id buổi gốc nếu là buổi DẠY BÙ
   attendance: SessionAttendance[]
+}
+
+// Ngày nghỉ lễ toàn hệ thống (hiển thị trên header lịch)
+export interface HolidayItem {
+  id: string
+  date: string // YYYY-MM-DD
+  name: string
 }
 
 export interface Enrollment {
@@ -232,6 +240,19 @@ export const STATUS_LABEL: Record<string, string> = {
   CANCELLED: 'Đã nghỉ / hủy',
   PENDING: 'Chờ xác nhận',
   CONFIRMED: 'Đã xác nhận',
+}
+
+// Trạng thái điểm danh buổi lớp nhóm (PRESENT / LATE / ABSENT)
+export const ATTENDANCE_LABEL: Record<string, string> = {
+  PRESENT: 'Có mặt',
+  LATE: 'Đi muộn',
+  ABSENT: 'Vắng mặt',
+}
+
+export const ATTENDANCE_BADGE_CLASS: Record<string, string> = {
+  PRESENT: 'bg-emerald-100 text-emerald-700',
+  LATE: 'bg-amber-100 text-amber-700',
+  ABSENT: 'bg-rose-100 text-rose-700',
 }
 
 export const STATUS_BADGE_CLASS: Record<string, string> = {

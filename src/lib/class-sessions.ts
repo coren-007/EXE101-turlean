@@ -48,6 +48,54 @@ export interface SlotLike {
   endTime: string
 }
 
+/** Tập ngày nghỉ lễ toàn hệ thống (YYYY-MM-DD) — sinh buổi sẽ bỏ qua */
+export async function getHolidayDates(): Promise<Set<string>> {
+  const rows = await db.holiday.findMany({ select: { date: true } })
+  return new Set(rows.map(r => r.date))
+}
+
+/**
+ * Thêm ngày lễ mới: hủy toàn bộ buổi SCHEDULED tương lai trúng đúng ngày
+ * (trừ buổi dạy bù — gia sư chủ động xếp). Trả về danh sách buổi đã hủy kèm
+ * thông tin lớp để NGƯỜI GỌI gửi thông báo cho học sinh.
+ */
+export async function cancelSessionsOnHoliday(date: string, holidayName: string) {
+  const today = todayISO()
+  // Chỉ xử lý ngày lễ trong tương lai — ngày đã qua không ảnh hưởng lịch
+  if (date < today) return []
+  const affected = await db.classSession.findMany({
+    where: {
+      status: 'SCHEDULED',
+      date,
+      makeupForId: null,
+    },
+    include: {
+      class: {
+        select: {
+          id: true, title: true, tutorId: true,
+          tutor: { select: { id: true, name: true } },
+          enrollments: { where: { status: 'APPROVED' }, select: { studentParent: { select: { id: true, name: true } } } },
+        },
+      },
+    },
+  })
+  if (affected.length === 0) return []
+  await db.classSession.updateMany({
+    where: { id: { in: affected.map(s => s.id) } },
+    data: { status: 'CANCELLED', note: `Nghỉ lễ: ${holidayName}` },
+  })
+  return affected.map(s => ({
+    sessionId: s.id,
+    classId: s.class.id,
+    classTitle: s.class.title,
+    tutorId: s.class.tutorId,
+    tutorName: s.class.tutor.name,
+    date: s.date,
+    time: `${s.startTime}–${s.endTime}`,
+    students: s.class.enrollments.map(e => e.studentParent),
+  }))
+}
+
 // Enrollment được thăng cấp từ danh sách chờ (dùng gửi thông báo)
 export interface PromotedEnrollment {
   id: string
@@ -87,7 +135,7 @@ export function generateSessionDates(
 
 /**
  * Sinh buổi học cho một lớp (idempotent — bỏ qua ngày đã có buổi).
- * Từ ngày max(hôm nay, startDate). Bỏ qua lớp CLOSED.
+ * Từ ngày max(hôm nay, startDate). Bỏ qua lớp CLOSED và NGÀY NGHỈ LỄ.
  * Trả về số buổi mới sinh.
  */
 export async function generateSessionsForClass(classId: string): Promise<number> {
@@ -100,12 +148,17 @@ export async function generateSessionsForClass(classId: string): Promise<number>
   const from = maxISO(todayISO(), cls.startDate ?? todayISO())
   const dates = generateSessionDates(cls.schedule, from, SESSIONS_WEEKS_AHEAD)
 
-  const existing = await db.classSession.findMany({
-    where: { classId },
-    select: { date: true, startTime: true },
-  })
+  const [holidays, existing] = await Promise.all([
+    getHolidayDates(),
+    db.classSession.findMany({
+      where: { classId },
+      select: { date: true, startTime: true },
+    }),
+  ])
   const seen = new Set(existing.map(e => `${e.date}|${e.startTime}`))
-  const toCreate = dates.filter(d => !seen.has(`${d.date}|${d.startTime}`))
+  const toCreate = dates.filter(
+    d => !seen.has(`${d.date}|${d.startTime}`) && !holidays.has(d.date),
+  )
   if (toCreate.length === 0) return 0
 
   await db.classSession.createMany({
@@ -135,12 +188,17 @@ export async function ensureRollingSessions(classId: string): Promise<number> {
   // Sinh 12 tuần từ sau buổi tương lai cuối cùng (hoặc từ hôm nay nếu hết sạch)
   const from = future.length ? addDaysISO(future[future.length - 1].date, 1) : maxISO(today, cls.startDate ?? today)
   const dates = generateSessionDates(cls.schedule, from, SESSIONS_WEEKS_AHEAD)
-  const existing = await db.classSession.findMany({
-    where: { classId },
-    select: { date: true, startTime: true },
-  })
+  const [holidays, existing] = await Promise.all([
+    getHolidayDates(),
+    db.classSession.findMany({
+      where: { classId },
+      select: { date: true, startTime: true },
+    }),
+  ])
   const seen = new Set(existing.map(e => `${e.date}|${e.startTime}`))
-  const toCreate = dates.filter(d => !seen.has(`${d.date}|${d.startTime}`))
+  const toCreate = dates.filter(
+    d => !seen.has(`${d.date}|${d.startTime}`) && !holidays.has(d.date),
+  )
   if (toCreate.length === 0) return 0
 
   await db.classSession.createMany({

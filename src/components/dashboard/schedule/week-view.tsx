@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  CalEvent, AvailabilitySlot, eventTitle, eventSubtitle, eventStart, eventEnd,
+  CalEvent, AvailabilitySlot, HolidayItem, eventTitle, eventSubtitle, eventStart, eventEnd,
   eventDate, eventBlockClass, eventStatus, toMinutes, dateKey, VN_DAY_SHORT,
 } from './schedule-shared'
 
@@ -69,13 +69,15 @@ interface WeekViewProps {
   onEventClick: (e: CalEvent) => void
   /** Nhãn block buổi 1-1: 'student' (gia sư xem) | 'subject' (học sinh tự xem) */
   oneLabel?: 'student' | 'subject'
+  /** Ngày nghỉ lễ — hiển thị tên lễ trên header cột ngày */
+  holidays?: HolidayItem[]
 }
 
 /**
  * Lịch tuần dạng lưới giờ — mỗi buổi học là 1 block click được để xem chi tiết.
  * Giờ trống 1-1 hiển thị nền gạch đứt phía sau (bật/tắt được).
  */
-export function WeekView({ days, events, availability, showAvailability, onEventClick, oneLabel = 'student' }: WeekViewProps) {
+export function WeekView({ days, events, availability, showAvailability, onEventClick, oneLabel = 'student', holidays }: WeekViewProps) {
   const [nowMin, setNowMin] = useState<number>(() =>
     new Date().getHours() * 60 + new Date().getMinutes(),
   )
@@ -124,6 +126,7 @@ export function WeekView({ days, events, availability, showAvailability, onEvent
             const key = dateKey(d)
             const isToday = key === todayKey
             const count = inWeek.filter(e => eventDate(e) === key && eventStatus(e) !== 'CANCELLED').length
+            const holiday = holidays?.find(h => h.date === key)
             return (
               <div
                 key={key}
@@ -137,6 +140,11 @@ export function WeekView({ days, events, availability, showAvailability, onEvent
                 </p>
                 {count > 0 && (
                   <p className="text-[9px] text-muted-foreground">{count} buổi</p>
+                )}
+                {holiday && (
+                  <p className="text-[9px] text-rose-600 font-semibold truncate px-1" title={`Ngày nghỉ lễ: ${holiday.name}`}>
+                    {holiday.name}
+                  </p>
                 )}
               </div>
             )
@@ -211,11 +219,12 @@ export function WeekView({ days, events, availability, showAvailability, onEvent
                         width: `calc(${w}% - 4px)`,
                         zIndex: 10,
                       }}
-                      title={`${eventTitle(ev)} · ${eventStart(ev)}–${eventEnd(ev)}`}
+                      title={`${eventTitle(ev)} · ${eventStart(ev)}–${eventEnd(ev)}${ev.kind === 'group' && ev.session.makeupForId ? ' (buổi dạy bù)' : ''}`}
                     >
                       <p className="text-[10px] font-bold leading-tight tabular-nums truncate">
                         {eventStart(ev)}–{eventEnd(ev)}
                         {cancelled && <span className="ml-1 font-semibold">(nghỉ)</span>}
+                        {ev.kind === 'group' && ev.session.makeupForId && <span className="ml-1 font-semibold">(bù)</span>}
                       </p>
                       <p className={`text-[10px] font-semibold leading-tight ${height >= 64 ? 'line-clamp-2' : 'truncate'} ${cancelled ? 'line-through' : ''}`}>
                         {ev.kind === 'group'

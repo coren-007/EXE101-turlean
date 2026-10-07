@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from '@/components/ui/dialog'
-import { CheckCircle2, XCircle, ClipboardCheck, CalendarClock, CalendarOff } from 'lucide-react'
+import { CheckCircle2, XCircle, ClipboardCheck, CalendarClock, CalendarOff, Clock4 } from 'lucide-react'
 import { toast } from 'sonner'
 import { GroupClass, ClassSessionItem, BookingItem, formatEventDate } from './schedule-shared'
 
@@ -23,16 +23,16 @@ export function AttendanceDialog({ target, onClose, onDone }: {
   onClose: () => void
   onDone: () => void
 }) {
-  const [marks, setMarks] = useState<Record<string, 'PRESENT' | 'ABSENT'>>({})
+  const [marks, setMarks] = useState<Record<string, 'PRESENT' | 'LATE' | 'ABSENT'>>({})
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!target) return
     const approved = target.cls.enrollments.filter(e => e.status === 'APPROVED')
-    const m: Record<string, 'PRESENT' | 'ABSENT'> = {}
+    const m: Record<string, 'PRESENT' | 'LATE' | 'ABSENT'> = {}
     for (const e of approved) {
       const existing = target.session.attendance.find(a => a.studentParentId === e.parent.id)
-      m[e.parent.id] = (existing?.status as 'PRESENT' | 'ABSENT') ?? 'PRESENT'
+      m[e.parent.id] = (existing?.status as 'PRESENT' | 'LATE' | 'ABSENT') ?? 'PRESENT'
     }
     setMarks(m)
   }, [target])
@@ -101,7 +101,7 @@ export function AttendanceDialog({ target, onClose, onDone }: {
                   <div className="flex gap-1 shrink-0">
                     <button
                       onClick={() => setMarks(p => ({ ...p, [e.parent.id]: 'PRESENT' }))}
-                      className={`h-7 rounded-full px-2.5 text-[11px] font-bold inline-flex items-center gap-1 transition-colors ${
+                      className={`h-7 rounded-full px-2 text-[11px] font-bold inline-flex items-center gap-1 transition-colors ${
                         st === 'PRESENT'
                           ? 'bg-emerald-600 text-white'
                           : 'bg-muted text-muted-foreground hover:bg-emerald-100 hover:text-emerald-700'
@@ -110,8 +110,18 @@ export function AttendanceDialog({ target, onClose, onDone }: {
                       <CheckCircle2 className="h-3.5 w-3.5" /> Có mặt
                     </button>
                     <button
+                      onClick={() => setMarks(p => ({ ...p, [e.parent.id]: 'LATE' }))}
+                      className={`h-7 rounded-full px-2 text-[11px] font-bold inline-flex items-center gap-1 transition-colors ${
+                        st === 'LATE'
+                          ? 'bg-amber-500 text-white'
+                          : 'bg-muted text-muted-foreground hover:bg-amber-100 hover:text-amber-700'
+                      }`}
+                    >
+                      <Clock4 className="h-3.5 w-3.5" /> Muộn
+                    </button>
+                    <button
                       onClick={() => setMarks(p => ({ ...p, [e.parent.id]: 'ABSENT' }))}
-                      className={`h-7 rounded-full px-2.5 text-[11px] font-bold inline-flex items-center gap-1 transition-colors ${
+                      className={`h-7 rounded-full px-2 text-[11px] font-bold inline-flex items-center gap-1 transition-colors ${
                         st === 'ABSENT'
                           ? 'bg-rose-600 text-white'
                           : 'bg-muted text-muted-foreground hover:bg-rose-100 hover:text-rose-700'
@@ -235,7 +245,7 @@ export function RescheduleDialog({ target, onClose, onDone }: {
   )
 }
 
-// ===== Dialog nghỉ buổi =====
+// ===== Dialog nghỉ buổi (+ tùy chọn xếp buổi DẠY BÙ) =====
 export function CancelSessionDialog({ target, onClose, onDone }: {
   target: CancelSessionTarget | null
   onClose: () => void
@@ -243,14 +253,39 @@ export function CancelSessionDialog({ target, onClose, onDone }: {
 }) {
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const [makeupEnabled, setMakeupEnabled] = useState(false)
+  const [makeup, setMakeup] = useState({ date: '', startTime: '', endTime: '' })
 
-  useEffect(() => { if (!target) setReason('') }, [target])
+  useEffect(() => {
+    if (!target) {
+      setReason('')
+      return
+    }
+    setMakeupEnabled(false)
+    // Gợi ý buổi bù: cùng giờ, 1 tuần sau
+    const d = new Date(`${target.session.date}T00:00:00`)
+    d.setDate(d.getDate() + 7)
+    const sug = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    setMakeup({ date: sug, startTime: target.session.startTime, endTime: target.session.endTime })
+  }, [target])
   if (!target) return null
 
   const submit = async () => {
     if (reason.trim().length < 5) {
       toast.error('Vui lòng nhập lý do nghỉ buổi (tối thiểu 5 ký tự)')
       return
+    }
+    let mu: { date: string; startTime: string; endTime: string } | undefined
+    if (makeupEnabled) {
+      if (!makeup.date || !makeup.startTime || !makeup.endTime) {
+        toast.error('Chọn đủ ngày và giờ cho buổi dạy bù')
+        return
+      }
+      if (makeup.startTime >= makeup.endTime) {
+        toast.error('Giờ bắt đầu buổi bù phải trước giờ kết thúc')
+        return
+      }
+      mu = { ...makeup }
     }
     setSaving(true)
     try {
@@ -259,7 +294,7 @@ export function CancelSessionDialog({ target, onClose, onDone }: {
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'cancel', reason: reason.trim() }),
+          body: JSON.stringify({ action: 'cancel', reason: reason.trim(), makeup: mu }),
         },
       )
       const data = await res.json()
@@ -293,6 +328,38 @@ export function CancelSessionDialog({ target, onClose, onDone }: {
             value={reason}
             onChange={e => setReason(e.target.value)}
           />
+        </div>
+        <div className="rounded-xl border p-3 space-y-2">
+          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={makeupEnabled}
+              onChange={e => setMakeupEnabled(e.target.checked)}
+            />
+            Xếp ngay buổi DẠY BÙ thay thế
+          </label>
+          {makeupEnabled && (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Ngày bù</Label>
+                  <Input type="date" value={makeup.date} onChange={e => setMakeup(p => ({ ...p, date: e.target.value }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Bắt đầu</Label>
+                  <Input type="time" value={makeup.startTime} onChange={e => setMakeup(p => ({ ...p, startTime: e.target.value }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Kết thúc</Label>
+                  <Input type="time" value={makeup.endTime} onChange={e => setMakeup(p => ({ ...p, endTime: e.target.value }))} />
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Hệ thống tự chặn nếu buổi bù trùng lịch khác. Học sinh nhận thông báo “nghỉ buổi → dạy bù”.
+              </p>
+            </>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Đóng</Button>

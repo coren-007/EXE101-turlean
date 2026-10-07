@@ -7,11 +7,11 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   CalendarDays, ChevronLeft, ChevronRight, Users, User, CalendarClock,
-  Clock3, CalendarCheck, GraduationCap, Sparkles, RotateCcw,
+  Clock3, CalendarCheck, GraduationCap, Sparkles, RotateCcw, CalendarOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  CalEvent, GroupClass, BookingItem, AvailabilitySlot,
+  CalEvent, GroupClass, BookingItem, AvailabilitySlot, HolidayItem,
   dateKey, weekStartOf, addDays, addMonths, eventDate, eventStatus,
   isEventStarted, isEventPast,
 } from './schedule-shared'
@@ -23,6 +23,7 @@ import {
   AttendanceTarget, RescheduleTarget, CancelSessionTarget,
 } from './event-action-dialogs'
 import { AvailabilityDialog } from './availability-dialog'
+import { HolidaysDialog } from './holidays-dialog'
 
 type ViewMode = 'week' | 'month'
 
@@ -39,6 +40,7 @@ export function TutorScheduleCalendar() {
   const [classes, setClasses] = useState<GroupClass[]>([])
   const [bookings, setBookings] = useState<BookingItem[]>([])
   const [availability, setAvailability] = useState<AvailabilitySlot[]>([])
+  const [holidays, setHolidays] = useState<HolidayItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
 
@@ -56,19 +58,22 @@ export function TutorScheduleCalendar() {
   const [cancelSessionTarget, setCancelSessionTarget] = useState<CancelSessionTarget | null>(null)
   const [cancelBookingTarget, setCancelBookingTarget] = useState<BookingItem | null>(null)
   const [availOpen, setAvailOpen] = useState(false)
+  const [holidayOpen, setHolidayOpen] = useState(false)
 
   const load = useCallback(async () => {
     if (!user) return
     try {
-      const [clsData, bookingData, availData] = await Promise.all([
+      const [clsData, bookingData, availData, holidayData] = await Promise.all([
         fetch('/api/classes/mine').then(r => r.json()),
         fetch('/api/bookings?role=tutor').then(r => r.json()),
         fetch('/api/tutors/me/availability').then(r => r.json()),
+        fetch('/api/holidays').then(r => r.json()).catch(() => ({ holidays: [] })),
       ])
       if (clsData?.error || bookingData?.error || availData?.error) throw new Error('load-failed')
       setClasses(clsData.classes || [])
       setBookings(bookingData.bookings || [])
       setAvailability(availData.availability || [])
+      setHolidays(holidayData.holidays || [])
       setLoadError(false)
     } catch {
       setLoadError(true)
@@ -282,6 +287,17 @@ export function TutorScheduleCalendar() {
             {availability.length}
           </span>
         </Button>
+        <Button
+          variant="outline"
+          className="rounded-full font-semibold"
+          onClick={() => setHolidayOpen(true)}
+          title="Quản lý ngày nghỉ lễ — sinh buổi sẽ bỏ qua"
+        >
+          <CalendarOff className="h-4 w-4 mr-1.5" /> Ngày lễ
+          <span className="ml-1.5 rounded-full bg-rose-100 text-rose-600 text-[10px] font-bold px-1.5 py-0.5">
+            {holidays.length}
+          </span>
+        </Button>
       </div>
 
       {/* ===== Thống kê nhanh phạm vi đang xem ===== */}
@@ -313,6 +329,7 @@ export function TutorScheduleCalendar() {
             availability={availability}
             showAvailability={filters.avail}
             onEventClick={setDetailEvent}
+            holidays={holidays}
           />
         ) : (
           <MonthView
@@ -320,6 +337,7 @@ export function TutorScheduleCalendar() {
             monthKey={monthKey}
             events={filteredEvents}
             onEventClick={setDetailEvent}
+            holidays={holidays}
             onDayClick={d => {
               setMode('week')
               const x = new Date(d)
@@ -386,6 +404,8 @@ export function TutorScheduleCalendar() {
             .catch(() => {})
         }}
       />
+
+      <HolidaysDialog open={holidayOpen} onOpenChange={setHolidayOpen} onChanged={load} />
     </div>
   )
 }

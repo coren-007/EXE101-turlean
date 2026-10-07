@@ -14,6 +14,7 @@ import {
   GraduationCap, MapPin, Users, Clock, CalendarDays, Wallet, Video,
   Home as HomeIcon, UserCheck, Clock3, XCircle, ExternalLink, MessageSquare, Ban,
   CalendarClock, ClipboardCheck, Hourglass, CheckCircle2, ChevronDown, ChevronUp,
+  AlertCircle, Clock4,
 } from 'lucide-react'
 import { formatVnd, formatDate, CLASS_DAY_NAMES, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -44,8 +45,18 @@ interface AttendanceRecord {
   date: string
   startTime: string
   endTime: string
-  status: string | null // PRESENT | ABSENT | null
+  status: string | null // PRESENT | LATE | ABSENT | null
   sessionNote?: string | null
+}
+
+// Lịch sử đóng học phí của tôi trong 1 lớp (từ /api/enrollments/mine)
+interface FeePaymentRecord {
+  id: string
+  period: string // YYYY-MM
+  amount: number
+  method: string
+  note: string | null
+  paidAt: string
 }
 
 interface MyEnrollment {
@@ -85,9 +96,17 @@ interface MyEnrollment {
   }
   attendance?: {
     present: number
+    late?: number
     absent: number
     total: number
     history: AttendanceRecord[]
+  }
+  fees?: {
+    monthlyFee: number | null
+    currentPeriod: string // YYYY-MM
+    currentPaid: boolean
+    unpaidPeriods: string[]
+    payments: FeePaymentRecord[]
   }
 }
 
@@ -286,12 +305,13 @@ export function StudentClassesPanel() {
                   </span>
                   <span className="text-muted-foreground">
                     <b className="text-emerald-600">{e.attendance.present} có mặt</b>
+                    {(e.attendance.late ?? 0) > 0 && <b className="text-amber-600"> · {e.attendance.late} muộn</b>}
                     {e.attendance.absent > 0 && <b className="text-rose-600"> · {e.attendance.absent} vắng</b>}
                     <span> / {e.attendance.total} buổi</span>
                   </span>
                 </div>
                 <Progress
-                  value={Math.round((e.attendance.present / e.attendance.total) * 100)}
+                  value={Math.round(((e.attendance.present + (e.attendance.late ?? 0)) / e.attendance.total) * 100)}
                   className="h-1.5"
                 />
                 {e.attendance.history.length > 0 && (
@@ -315,6 +335,10 @@ export function StudentClassesPanel() {
                           <span className="inline-flex items-center gap-1 text-emerald-600 font-semibold shrink-0">
                             <CheckCircle2 className="h-3 w-3" /> Có mặt
                           </span>
+                        ) : a.status === 'LATE' ? (
+                          <span className="inline-flex items-center gap-1 text-amber-600 font-semibold shrink-0">
+                            <Clock4 className="h-3 w-3" /> Đi muộn
+                          </span>
                         ) : a.status === 'ABSENT' ? (
                           <span className="inline-flex items-center gap-1 text-rose-600 font-semibold shrink-0">
                             <XCircle className="h-3 w-3" /> Vắng
@@ -324,6 +348,50 @@ export function StudentClassesPanel() {
                         )}
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Học phí — chỉ khi đã vào lớp và lớp có học phí tháng */}
+            {e.status === 'APPROVED' && e.fees && (e.fees.monthlyFee != null || e.fees.payments.length > 0) && (
+              <div className="mt-2.5 rounded-lg border px-2.5 py-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-medium">
+                    <Wallet className="h-3 w-3" /> Học phí
+                    {e.fees.monthlyFee != null && (
+                      <span className="text-foreground font-semibold">{formatVnd(e.fees.monthlyFee)}/tháng</span>
+                    )}
+                  </span>
+                  {e.fees.currentPaid ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Tháng {Number(e.fees.currentPeriod.slice(5))}/{e.fees.currentPeriod.slice(2, 4)} đã đóng
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600">
+                      <AlertCircle className="h-3 w-3" />
+                      Tháng {Number(e.fees.currentPeriod.slice(5))}/{e.fees.currentPeriod.slice(2, 4)} chưa đóng
+                      {e.fees.unpaidPeriods.length > 1 && ` (+${e.fees.unpaidPeriods.length - 1} tháng)`}
+                    </span>
+                  )}
+                </div>
+                {e.fees.payments.length > 0 && (
+                  <div className="space-y-0.5">
+                    {e.fees.payments.slice(0, 3).map(p => (
+                      <div key={p.id} className="flex items-center justify-between gap-2 text-[11px] px-1.5 py-0.5 rounded bg-muted/40">
+                        <span className="text-muted-foreground truncate">
+                          T{Number(p.period.slice(5))}/{p.period.slice(2, 4)}
+                          {p.note ? ` · ${p.note}` : ''}
+                        </span>
+                        <span className="font-semibold text-foreground shrink-0">{formatVnd(p.amount)}</span>
+                      </div>
+                    ))}
+                    {e.fees.payments.length > 3 && (
+                      <p className="text-[10px] text-muted-foreground px-1.5">
+                        +{e.fees.payments.length - 3} lần đóng khác
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

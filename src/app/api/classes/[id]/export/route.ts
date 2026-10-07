@@ -44,14 +44,14 @@ export async function GET(
   const sessions = cls.sessions.filter(s => s.status !== 'SCHEDULED' || s.date <= new Date().toISOString().split('T')[0])
   const attended = sessions.filter(s => s.status !== 'SCHEDULED')
 
-  // Header: Học sinh, SĐT, [từng buổi], Tổng có mặt, Tổng vắng
+  // Header: Học sinh, SĐT, [từng buổi], Tổng có mặt, Đi muộn, Tổng vắng
   const header = [
     'Học sinh', 'SĐT phụ huynh',
     ...attended.map(s => {
       const [y, m, d] = s.date.split('-')
       return `${d}/${m} ${s.startTime}`
     }),
-    'Tổng có mặt', 'Tổng vắng',
+    'Tổng có mặt', 'Đi muộn', 'Tổng vắng',
   ]
 
   const rows = cls.enrollments.map(e => {
@@ -63,23 +63,28 @@ export async function GET(
     )
     const marks = attended.map(s => {
       const st = attBySession.get(s.id)
-      return st === 'PRESENT' ? 'P' : st === 'ABSENT' ? 'A' : '-'
+      return st === 'PRESENT' ? 'P' : st === 'LATE' ? 'M' : st === 'ABSENT' ? 'A' : '-'
     })
     const present = marks.filter(m => m === 'P').length
+    const late = marks.filter(m => m === 'M').length
     const absent = marks.filter(m => m === 'A').length
     return [
       e.studentName ?? e.studentParent.name,
       e.studentParent.phone ?? '',
       ...marks,
       String(present),
+      String(late),
       String(absent),
     ]
   })
 
-  // Ghi chú trạng thái buổi (buổi hủy hiển thị riêng ở dòng cuối)
+  // Ghi chú trạng thái buổi (buổi hủy / buổi dạy bù hiển thị riêng ở dòng cuối)
   const cancelNotes = attended
     .filter(s => s.status === 'CANCELLED')
     .map(s => `${s.date} ${s.startTime} — nghỉ: ${s.note ?? ''}`)
+  const makeupNotes = cls.sessions
+    .filter(s => s.makeupForId)
+    .map(s => `${s.date} ${s.startTime} — dạy bù (thay buổi ${s.note ?? ''})`)
 
   const lines = [
     [`Sổ điểm danh lớp: ${cls.title}`],
@@ -89,8 +94,9 @@ export async function GET(
     header,
     ...rows,
     ...(cancelNotes.length ? [[], ['Buổi đã nghỉ (không tính điểm danh):'], ...cancelNotes.map(n => [n])] : []),
+    ...(makeupNotes.length ? [[], ['Buổi dạy bù:'], ...makeupNotes.map(n => [n])] : []),
     [],
-    ['Chú thích: P = có mặt · A = vắng mặt · - = chưa điểm danh'],
+    ['Chú thích: P = có mặt · M = đi muộn · A = vắng mặt · - = chưa điểm danh'],
   ]
 
   const csv = '\uFEFF' + lines.map(l => l.map(csvEscape).join(',')).join('\r\n')

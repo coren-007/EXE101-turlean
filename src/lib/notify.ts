@@ -465,3 +465,88 @@ export async function notifyStudentsClassSessionReminder(params: {
     })
   }
 }
+
+// ===== Sổ học phí lớp nhóm =====
+
+/** Thông báo cho PHỤ HUYNH khi gia sư ghi nhận đã đóng học phí tháng */
+export async function notifyStudentFeeRecorded(params: {
+  tutorId: string
+  tutorName: string
+  studentId: string
+  studentName: string
+  classTitle: string
+  period: string // YYYY-MM
+  amount: number
+  method: string
+  note?: string | null
+}) {
+  const [y, m] = params.period.split('-')
+  const methodLabel: Record<string, string> = {
+    CASH: 'tiền mặt',
+    BANK: 'chuyển khoản',
+    MOMO: 'ví MoMo',
+    OTHER: 'hình thức khác',
+  }
+  const body =
+    `[Học phí] Gia sư ${params.tutorName} đã ghi nhận học phí tháng ${m}/${y} của ` +
+    `${params.studentName} trong lớp "${params.classTitle}": ${vnd(params.amount)} ` +
+    `(${methodLabel[params.method] ?? params.method}).` +
+    (params.note ? `\nGhi chú: ${params.note}.` : '') +
+    '\nCảm ơn bạn đã đồng hành cùng lớp học!'
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body,
+  })
+}
+
+/** Thông báo khi gia sư NGHỈ BUỔI kèm xếp luôn BUỔI DẠY BÙ mới */
+export async function notifyStudentsMakeupScheduled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  oldDate: string
+  oldTime: string
+  newDate: string
+  newTime: string
+  reason: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nghỉ buổi → dạy bù] Buổi ${params.oldDate} ${params.oldTime} của lớp "${params.classTitle}" ` +
+      `sẽ NGHỈ (lý do: ${params.reason}) và được DẠY BÙ vào ${params.newDate} · ${params.newTime}.\n` +
+      'Vui lòng sắp xếp đến buổi bù đúng giờ.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh khi buổi bị hủy do NGÀY NGHỈ LỄ (thêm mới / đổi lịch lễ) */
+export async function notifyStudentsHolidayCancelled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  date: string
+  time: string
+  holidayName: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nghỉ lễ] Buổi ${params.date} ${params.time} của lớp "${params.classTitle}" được nghỉ ` +
+      `do ngày nghỉ lễ: ${params.holidayName}.\n` +
+      'Các buổi khác trong lịch vẫn diễn ra bình thường.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}

@@ -1,5 +1,6 @@
 // POST /api/classes/[id]/sessions/[sessionId]/attendance — gia sư ĐIỂM DANH một buổi
-// học lớp nhóm: đánh dấu từng học sinh APPROVED là CÓ MẶT (PRESENT) / VẮNG (ABSENT).
+// học lớp nhóm: đánh dấu từng học sinh APPROVED là CÓ MẶT (PRESENT) / ĐI MUỘN (LATE)
+// / VẮNG (ABSENT).
 //
 // Quy tắc:
 //  - Chỉ điểm danh được SAU khi buổi đã đến giờ bắt đầu (đồng nhất logic "hoàn thành
@@ -20,7 +21,7 @@ const attendanceSchema = z.object({
     .array(
       z.object({
         studentParentId: z.string().min(1),
-        status: z.enum(['PRESENT', 'ABSENT']),
+        status: z.enum(['PRESENT', 'LATE', 'ABSENT']),
       }),
     )
     .min(1, 'Danh sách điểm danh không được trống')
@@ -126,12 +127,13 @@ export async function POST(
   const extended = await ensureRollingSessions(id)
 
   const present = updated.attendance.filter(a => a.status === 'PRESENT').length
+  const late = updated.attendance.filter(a => a.status === 'LATE').length
   const absent = updated.attendance.filter(a => a.status === 'ABSENT').length
 
   return NextResponse.json({
     session: updated,
-    summary: { total: updated.attendance.length, present, absent },
+    summary: { total: updated.attendance.length, present, late, absent },
     sessionsExtended: extended,
-    message: `Đã điểm danh buổi ${formatDate(session.date)} — ${present} có mặt, ${absent} vắng`,
+    message: `Đã điểm danh buổi ${formatDate(session.date)} — ${present} có mặt${late > 0 ? `, ${late} đi muộn` : ''}${absent > 0 ? `, ${absent} vắng` : ''}`,
   })
 }

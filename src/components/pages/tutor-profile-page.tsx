@@ -20,7 +20,7 @@ import {
   MapPin, Home, School, Star, BadgeCheck, Clock, Briefcase, GraduationCap,
   Phone, Calendar, ArrowLeft, Share2, Heart, MessageSquare, Navigation,
   CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2, Lock,
-  Users, PencilLine, CalendarClock, Hourglass
+  Users, PencilLine, CalendarClock, Hourglass, AlertTriangle
 } from 'lucide-react'
 import { formatVnd, formatDate, timeAgo, formatClassSchedule, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -173,6 +173,8 @@ export function TutorProfilePage({ id }: { id: string }) {
   const [enrollStudentName, setEnrollStudentName] = useState('')
   const [enrollNote, setEnrollNote] = useState('')
   const [submittingEnroll, setSubmittingEnroll] = useState(false)
+  // Cảnh báo trùng lịch trả về từ API (409) — hiện trong dialog, cho phép đăng ký tiếp (force)
+  const [enrollConflicts, setEnrollConflicts] = useState<string[]>([])
   // Tự mở dialog đăng ký khi vào từ tab "Lớp học" của trang tìm kiếm (view.classId)
   const autoOpenedClassId = useRef<string | null>(null)
 
@@ -281,10 +283,11 @@ export function TutorProfilePage({ id }: { id: string }) {
     }
     setEnrollStudentName('')
     setEnrollNote('')
+    setEnrollConflicts([])
     setEnrollTarget(cls)
   }
 
-  const handleEnroll = async () => {
+  const handleEnroll = async (force = false) => {
     if (!enrollTarget) return
     setSubmittingEnroll(true)
     try {
@@ -294,12 +297,20 @@ export function TutorProfilePage({ id }: { id: string }) {
         body: JSON.stringify({
           studentName: enrollStudentName.trim() || undefined,
           note: enrollNote.trim() || undefined,
+          force,
         }),
       })
       const data = await res.json()
+      // 409 = trùng lịch với lớp/1-1 đang có → hiện danh sách để phụ huynh quyết định
+      if (res.status === 409 && Array.isArray(data.conflicts)) {
+        setEnrollConflicts(data.conflicts)
+        toast.info('Lịch lớp này đang trùng lịch học đã có của bạn — xem trong dialog để quyết định')
+        return
+      }
       if (!res.ok) throw new Error(data.error || 'Đăng ký thất bại')
       toast.success(data.message || 'Đã gửi đăng ký lớp học', { duration: 5000 })
       setEnrollTarget(null)
+      setEnrollConflicts([])
       reloadClasses()
     } catch (e: any) {
       toast.error(e.message || 'Đăng ký thất bại')
@@ -1483,12 +1494,37 @@ export function TutorProfilePage({ id }: { id: string }) {
               )}
               <p>Gia sư sẽ duyệt đăng ký và gửi kết quả qua Tin nhắn.</p>
             </div>
+
+            {/* Cảnh báo trùng lịch với lớp/1-1 đang có của phụ huynh */}
+            {enrollConflicts.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-1.5">
+                <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5" /> Lịch lớp này đang trùng lịch học đã có của bạn:
+                </p>
+                <ul className="space-y-1">
+                  {enrollConflicts.map((c, i) => (
+                    <li key={i} className="text-xs text-amber-800 flex items-start gap-1.5">
+                      <span className="mt-1 h-1 w-1 rounded-full bg-amber-500 shrink-0" />
+                      <span>{c}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[11px] text-amber-700">
+                  Bạn vẫn có thể đăng ký nếu chấp nhận trùng lịch (ví dụ học sinh khác nhau học các lớp khác nhau).
+                </p>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEnrollTarget(null)}>Đóng</Button>
-            <Button onClick={handleEnroll} disabled={submittingEnroll}>
-              {submittingEnroll ? 'Đang gửi...' : 'Gửi đăng ký'}
+            {enrollConflicts.length > 0 && (
+              <Button variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-50" onClick={() => handleEnroll(true)} disabled={submittingEnroll}>
+                {submittingEnroll ? 'Đang gửi...' : 'Vẫn đăng ký'}
+              </Button>
+            )}
+            <Button onClick={() => handleEnroll(false)} disabled={submittingEnroll}>
+              {submittingEnroll ? 'Đang gửi...' : enrollConflicts.length > 0 ? 'Xem lại lịch rồi gửi' : 'Gửi đăng ký'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import {
   GraduationCap, MapPin, Video, Wallet, Clock, CalendarClock, XCircle,
-  CheckCircle2, ClipboardCheck, ExternalLink, MessageSquare, Home as HomeIcon,
+  CheckCircle2, ClipboardCheck, ExternalLink, MessageSquare, Home as HomeIcon, Clock4,
 } from 'lucide-react'
 import {
   CalEvent, eventDate, eventStart, eventEnd, eventStatus, eventTitle,
@@ -19,7 +19,7 @@ import {
 interface StudentEventDetailDialogProps {
   event: CalEvent | null
   onClose: () => void
-  /** Điểm danh của TÔI trong buổi lớp nhóm (PRESENT | ABSENT | null) */
+  /** Điểm danh của TÔI trong buổi lớp nhóm (PRESENT | LATE | ABSENT | null) */
   myAttendance?: string | null
   onOpenTutor: (tutorId: string) => void
   onChat: (tutorId: string) => void
@@ -87,11 +87,20 @@ export function StudentEventDetailDialog({
             <Badge className={`${STATUS_BADGE_CLASS[status] ?? 'bg-muted text-muted-foreground'} border-0 text-[10px] gap-1`}>
               {STATUS_LABEL[status] ?? status}
             </Badge>
+            {isGroup && event.session.makeupForId && (
+              <Badge className="bg-sky-100 text-sky-700 border-0 text-[10px] gap-1" title="Buổi dạy bù thay cho buổi đã nghỉ">
+                Dạy bù
+              </Badge>
+            )}
             {/* Điểm danh của tôi trong buổi lớp nhóm đã hoàn thành */}
             {isGroup && status === 'COMPLETED' && (
               myAttendance === 'PRESENT' ? (
                 <Badge className="bg-emerald-100 text-emerald-700 border-0 text-[10px] gap-1">
                   <CheckCircle2 className="h-3 w-3" /> Bạn: CÓ MẶT
+                </Badge>
+              ) : myAttendance === 'LATE' ? (
+                <Badge className="bg-amber-100 text-amber-700 border-0 text-[10px] gap-1">
+                  <Clock4 className="h-3 w-3" /> Bạn: ĐI MUỘN
                 </Badge>
               ) : myAttendance === 'ABSENT' ? (
                 <Badge className="bg-rose-100 text-rose-700 border-0 text-[10px] gap-1">
