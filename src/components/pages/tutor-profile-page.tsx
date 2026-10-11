@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useApp } from '@/lib/store'
+import { useFavorites } from '@/lib/favorites'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -189,28 +190,14 @@ export function TutorProfilePage({ id }: { id: string }) {
   const [submitting, setSubmitting] = useState(false)
   // Mục đích 1 — lớp học định kỳ: 1 = buổi lẻ, >= 2 = khóa lặp mỗi tuần cùng khung giờ
   const [repeatWeeks, setRepeatWeeks] = useState(1)
-  const [isFavorite, setIsFavorite] = useState(false) // P1: favorite qua localStorage
 
-  // P1: favorite từ localStorage
+  // P4: favorite đồng bộ tài khoản (DB) — guest fallback localStorage, tự merge khi login
+  const { isFavorite: checkFavorite, toggle: toggleFavoriteFn, load: loadFavorites } = useFavorites()
+  const isFavorite = checkFavorite(id)
+  const toggleFavorite = () => { void toggleFavoriteFn(id, tutor?.name) }
   useEffect(() => {
-    try {
-      const favs = JSON.parse(localStorage.getItem('favorite_tutors') ?? '[]')
-      setIsFavorite(favs.includes(id))
-    } catch { /* ignore */ }
-  }, [id])
-
-  // P1: nút yêu thích — lưu vào localStorage
-  const toggleFavorite = () => {
-    try {
-      const favs = JSON.parse(localStorage.getItem('favorite_tutors') ?? '[]')
-      const next = favs.includes(id) ? favs.filter((f: string) => f !== id) : [...favs, id]
-      localStorage.setItem('favorite_tutors', JSON.stringify(next))
-      setIsFavorite(next.includes(id))
-      toast.success(next.includes(id) ? 'Đã lưu vào danh sách yêu thích' : 'Đã bỏ khỏi danh sách yêu thích')
-    } catch {
-      toast.error('Không thể lưu danh sách yêu thích')
-    }
-  }
+    void loadFavorites(user ? { id: user.id } : null)
+  }, [user, loadFavorites])
 
   // P1: chia sẻ hồ sơ — native share trên mobile, copy link trên desktop
   const handleShare = async () => {

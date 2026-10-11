@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { MapPin, Home, School, Star, BadgeCheck, ShieldCheck, Video, Sparkles } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { RatingStars } from './rating-stars'
+import { FavoriteButton } from './favorite-button'
 import { formatVnd } from '@/lib/format'
 
 export interface Tutor {
@@ -97,24 +98,27 @@ export function TutorCard({ tutor, compact }: { tutor: Tutor; compact?: boolean 
           )}
         </div>
 
-        {/* Độ tin cậy góc phải */}
-        {tutor.reliability && (
-          <span
-            className={`absolute top-2.5 right-2.5 inline-flex items-center gap-1 rounded-full px-2 py-1 shadow-e1 text-[10px] font-bold ${
-              tutor.reliability.score >= 90
-                ? 'bg-emerald-600 text-white'
-                : tutor.reliability.score >= 70
-                  ? 'bg-blue-600 text-white'
-                  : tutor.reliability.score >= 50
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-rose-600 text-white'
-            }`}
-            title={`Độ tin cậy ${tutor.reliability.score}/100 · ${tutor.reliability.tierLabel}`}
-          >
-            <ShieldCheck className="h-3 w-3" />
-            {tutor.reliability.score}
-          </span>
-        )}
+        {/* Độ tin cậy + nút lưu (heart) — cột phải trên cover */}
+        <div className="absolute top-2.5 right-2.5 flex flex-col items-end gap-1.5">
+          {tutor.reliability && (
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 shadow-e1 text-[10px] font-bold ${
+                tutor.reliability.score >= 90
+                  ? 'bg-emerald-600 text-white'
+                  : tutor.reliability.score >= 70
+                    ? 'bg-blue-600 text-white'
+                    : tutor.reliability.score >= 50
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-rose-600 text-white'
+              }`}
+              title={`Độ tin cậy ${tutor.reliability.score}/100 · ${tutor.reliability.tierLabel}`}
+            >
+              <ShieldCheck className="h-3 w-3" />
+              {tutor.reliability.score}
+            </span>
+          )}
+          <FavoriteButton tutorId={tutor.id} tutorName={tutor.name} size="sm" />
+        </div>
 
         {/* Giá — overlay dưới */}
         <div className="absolute bottom-2.5 right-2.5 bg-white/95 backdrop-blur-sm rounded-full px-3 py-1.5 shadow-e1">

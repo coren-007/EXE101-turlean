@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { computeReliabilityBulk } from '@/lib/reliability'
+import { normalizeVi, normalizeTutorHaystack } from '@/lib/text'
 
 // SQLite: contains đã case-insensitive; PostgreSQL: cần mode insensitive
 const IS_POSTGRES = (process.env.DATABASE_URL ?? '').startsWith('postgres')
@@ -42,24 +43,18 @@ export async function GET(req: NextRequest) {
 
   const where: Prisma.UserWhereInput = {
     role: 'TUTOR',
-    hourlyRate: { gt: 0 },
+    // P4: lọc giá đẩy xuống DB (minPrice hiển thị = hourlyRate vì đã yêu cầu > 0)
+    hourlyRate: {
+      gt: 0,
+      ...(minPrice ? { gte: Number(minPrice) } : {}),
+      ...(maxPrice ? { lte: Number(maxPrice) } : {}),
+    },
     tutorSubjects: { some: { subject: subjectFilter } },
   }
 
   // Text search (q): theo tên gia sư, nghề nghiệp, bio, tên môn học — không phân biệt hoa thường
-  if (q) {
-    where.AND = [
-      {
-        OR: [
-          { name: ci('name', q) },
-          { profession: ci('profession', q) },
-          { bio: ci('bio', q) },
-          { tutorSubjects: { some: { subject: { name: ci('name', q) } } } },
-        ],
-      },
-    ]
-  }
-
+  // (SQL contains). Nếu q KHÔNG dấu tiếng Việt ("toan") thì SQL không khớp "Toán" →
+  // fallback JS normalize bên dưới.
   if (district) where.district = district
   if (city) where.city = city
 
@@ -72,13 +67,44 @@ export async function GET(req: NextRequest) {
     where.teachesOnline = true
   }
 
-  const tutors = await db.user.findMany({
-    where,
+  // whereWithQ = where + điều kiện text search (build SAU khi where đã đủ district/city/mode)
+  const whereWithQ: Prisma.UserWhereInput = { ...where }
+  if (q) {
+    whereWithQ.AND = [
+      {
+        OR: [
+          { name: ci('name', q) },
+          { profession: ci('profession', q) },
+          { bio: ci('bio', q) },
+          { tutorSubjects: { some: { subject: { name: ci('name', q) } } } },
+        ],
+      },
+    ]
+  }
+
+  let tutors = await db.user.findMany({
+    where: whereWithQ,
     include: {
       tutorSubjects: { include: { subject: true } },
       reviewsReceived: { select: { rating: true } },
     },
   })
+
+  // P4: fallback q không dấu tiếng Việt — SQL contains không khớp "toan" ↔ "Toán",
+  // nên khi SQL ra 0 kết quả, thử lọc JS sau khi normalize bỏ dấu (như autocomplete)
+  if (q && tutors.length === 0) {
+    const norm = normalizeVi(q)
+    if (norm) {
+      const all = await db.user.findMany({
+        where,
+        include: {
+          tutorSubjects: { include: { subject: true } },
+          reviewsReceived: { select: { rating: true } },
+        },
+      })
+      tutors = all.filter(t => normalizeTutorHaystack(t).includes(norm))
+    }
+  }
 
   // Compute rating and price
   let result = tutors.map(t => {

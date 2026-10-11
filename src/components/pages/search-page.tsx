@@ -12,10 +12,12 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Sheet, SheetContent, SheetTitle, SheetHeader } from '@/components/ui/sheet'
 import { TutorCard, Tutor } from '@/components/tutor-card'
+import { SearchSuggest, pushRecentSearch, SuggestSubject } from '@/components/search-suggest'
+import { FavoriteButton } from '@/components/favorite-button'
 import {
   Search, MapPin, Home, School, SlidersHorizontal, LayoutGrid, Map as MapIcon,
   X, Navigation, Star, GraduationCap, Video, ChevronLeft, ChevronRight, ChevronDown,
-  Users, CalendarClock, Hourglass, BadgeCheck, Clock
+  Users, CalendarClock, Hourglass, BadgeCheck, Clock, BookOpen
 } from 'lucide-react'
 import { formatVnd, formatVndShort, formatDate, CLASS_DAY_NAMES, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -110,7 +112,12 @@ const DAY_FILTERS = [1, 2, 3, 4, 5, 6, 0]
 
 export function SearchPage() {
   const { view, navigate } = useApp()
-  const initial = view.name === 'search' ? view : { subject: '', mode: '', district: '', lat: undefined, lng: undefined }
+  // Tham số từ URL/navigation — ưu tiên cao hơn localStorage khi có (link chia sẻ được)
+  const initial: {
+    q?: string; subject?: string; city?: string; mode?: string; district?: string
+    level?: string; maxPrice?: number; minRating?: number; sort?: string
+    lat?: number; lng?: number
+  } = view.name === 'search' ? view : {}
   const saved = typeof window !== 'undefined' ? loadSavedFilters() : {}
 
   const [tutors, setTutors] = useState<Tutor[]>([])
@@ -128,15 +135,21 @@ export function SearchPage() {
   // Locations data
   const [locations, setLocations] = useState<{ city: string; tutorCount: number; districts: { name: string; count: number }[] }[]>([])
 
+  // Danh sách môn học kèm số gia sư (cho hàng chip môn + hiện tên môn đang lọc)
+  const [subjects, setSubjects] = useState<SuggestSubject[]>([])
+
   // Filters (with localStorage persistence)
-  const [search, setSearch] = useState(initial.subject || saved.search || '')
-  const [city, setCity] = useState<string>('')
+  // searchInput = giá trị ô nhập (tức thì); search = từ khóa đã debounce 300ms dùng để query
+  const [searchInput, setSearchInput] = useState(initial.q || saved.search || '')
+  const [search, setSearch] = useState(initial.q || saved.search || '')
+  const [subjectSlug, setSubjectSlug] = useState(initial.subject || '')
+  const [city, setCity] = useState<string>(initial.city || '')
   const [district, setDistrict] = useState<string>(initial.district || '')
-  const [level, setLevel] = useState<string>(saved.level || '')
+  const [level, setLevel] = useState<string>(initial.level || saved.level || '')
   const [mode, setMode] = useState<string>(initial.mode || saved.mode || '')
-  const [maxPrice, setMaxPrice] = useState<number>(saved.maxPrice ?? 800000)
-  const [minRating, setMinRating] = useState<number>(saved.minRating ?? 0)
-  const [sort, setSort] = useState<'rating' | 'newest' | 'price_asc' | 'price_desc' | 'distance'>(saved.sort as any || 'rating')
+  const [maxPrice, setMaxPrice] = useState<number>(initial.maxPrice ?? saved.maxPrice ?? 800000)
+  const [minRating, setMinRating] = useState<number>(initial.minRating ?? saved.minRating ?? 0)
+  const [sort, setSort] = useState<'rating' | 'newest' | 'price_asc' | 'price_desc' | 'distance'>(initial.sort as any || saved.sort as any || 'rating')
   const [viewMode, setViewMode] = useState<'grid' | 'map'>(saved.viewMode || 'grid')
   const [selectedId, setSelectedId] = useState<string | undefined>()
 
@@ -165,6 +178,23 @@ export function SearchPage() {
       .then(data => setLocations(data.locations || []))
       .catch(() => {})
   }, [])
+
+  // Load danh sách môn học kèm số gia sư — cho hàng chip môn + tra tên môn đang lọc
+  useEffect(() => {
+    fetch('/api/subjects')
+      .then(r => r.json())
+      .then(data => {
+        const list = (Array.isArray(data) ? data : []).filter((s: any) => (s.tutorCount ?? 0) > 0)
+        setSubjects(list.sort((a: any, b: any) => b.tutorCount - a.tutorCount))
+      })
+      .catch(() => {})
+  }, [])
+
+  // Debounce từ khóa 300ms — tránh dội request mỗi phím gõ
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 300)
+    return () => clearTimeout(t)
+  }, [searchInput])
 
   // When city changes, reset district (inline in onClick handlers below)
   const changeCity = (newCity: string) => {
@@ -224,8 +254,8 @@ export function SearchPage() {
   // Chữ ký bộ lọc — đổi filter tự động reset về trang 1 (derived state,
   // tránh setState-in-effect)
   const filterSignature = useMemo(() =>
-    JSON.stringify([search, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort]),
-    [search, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort]
+    JSON.stringify([search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort]),
+    [search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort]
   )
   const [pageState, setPageState] = useState({ sig: filterSignature, page: 1 })
   const page = pageState.sig === filterSignature ? pageState.page : 1
@@ -237,6 +267,7 @@ export function SearchPage() {
   const queryString = useMemo(() => {
     const params = new URLSearchParams()
     if (search) params.set('q', search)
+    if (subjectSlug) params.set('subject', subjectSlug)
     if (city) params.set('city', city)
     if (district) params.set('district', district)
     if (level) params.set('level', level)
@@ -252,26 +283,48 @@ export function SearchPage() {
     params.set('page', String(page))
     params.set('pageSize', '12')
     return params.toString()
-  }, [search, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort, page])
+  }, [search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort, page])
 
+  // Fetch kèm AbortController — hủy request cũ khi filter đổi nhanh (gõ chữ/chuyển trang)
   useEffect(() => {
-    let cancelled = false
+    const ac = new AbortController()
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
-    fetch(`/api/tutors?${queryString}`)
+    fetch(`/api/tutors?${queryString}`, { signal: ac.signal })
       .then(r => r.json())
       .then(data => {
-        if (cancelled) return
+        if (ac.signal.aborted) return
         setTutors(data.tutors || [])
         setTotal(data.total ?? (data.tutors || []).length)
         setTotalPages(data.totalPages ?? 1)
         setLoading(false)
       })
       .catch(() => {
-        if (!cancelled) setLoading(false)
+        if (!ac.signal.aborted) setLoading(false)
       })
-    return () => { cancelled = true }
+    return () => ac.abort()
   }, [queryString])
+
+  // Đồng bộ bộ lọc vào URL (replaceState — không tạo mục bấm Back) → link kết quả chia sẻ được
+  useEffect(() => {
+    const params = new URLSearchParams()
+    params.set('view', 'search')
+    if (search) params.set('q', search)
+    if (subjectSlug) params.set('subject', subjectSlug)
+    if (city) params.set('city', city)
+    if (district) params.set('district', district)
+    if (level) params.set('level', level)
+    if (mode) params.set('mode', mode)
+    if (maxPrice < 800000) params.set('maxPrice', String(maxPrice))
+    if (minRating > 0) params.set('minRating', String(minRating))
+    if (sort !== 'rating') params.set('sort', sort)
+    if (effectiveLat != null && effectiveLng != null) {
+      params.set('lat', String(effectiveLat))
+      params.set('lng', String(effectiveLng))
+    }
+    if (page > 1) params.set('page', String(page))
+    window.history.replaceState({}, '', `/?${params.toString()}`)
+  }, [search, subjectSlug, city, district, level, mode, maxPrice, minRating, sort, effectiveLat, effectiveLng, page])
 
   // ===== Fetch lớp học nhóm khi tab "Lớp học" đang mở =====
   useEffect(() => {
@@ -301,6 +354,7 @@ export function SearchPage() {
   const activeFilterCount =
     (city ? 1 : 0) +
     (district ? 1 : 0) +
+    (subjectSlug ? 1 : 0) +
     (level ? 1 : 0) +
     (mode ? 1 : 0) +
     (maxPrice < 800000 ? 1 : 0) +
@@ -310,10 +364,13 @@ export function SearchPage() {
   const clearFilters = () => {
     setCity('')
     setDistrict('')
+    setSubjectSlug('')
     setLevel('')
     setMode('')
     setMaxPrice(800000)
     setMinRating(0)
+    setSearchInput('')
+    setSearch('')
     clearLocation()
   }
 
@@ -463,20 +520,25 @@ export function SearchPage() {
           {resultTab === 'tutors' && (
           <div className="flex gap-2 items-center">
             <div className="search-pill flex-1 max-w-2xl">
-              <div className="flex items-center gap-2 flex-1 px-4">
-                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-                <Input
-                  placeholder="Môn học, tên gia sư... (vd: Toán, IELTS)"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="border-0 shadow-none focus-visible:ring-0 px-0 h-10 text-sm font-medium placeholder:font-normal"
-                />
-                {search && (
-                  <button onClick={() => setSearch('')} aria-label="Xóa từ khóa" className="text-muted-foreground hover:text-foreground">
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+              <SearchSuggest
+                className="flex-1 min-w-0 px-4"
+                value={searchInput}
+                onChange={setSearchInput}
+                onSubmit={(term) => {
+                  pushRecentSearch(term)
+                  setSearch(term)
+                  // đổi từ khóa → bỏ lọc môn (tránh 2 filter text+subject đánh nhau)
+                  if (subjectSlug) setSubjectSlug('')
+                  setPage(1)
+                }}
+                onPickSubject={(s) => {
+                  // chọn môn từ gợi ý → lọc theo subject, xóa text
+                  setSubjectSlug(s.slug)
+                  setSearchInput('')
+                  setSearch('')
+                  setPage(1)
+                }}
+              />
               <div className="pill-sep" />
               <div className="flex items-center px-4 min-w-[110px]">
                 <select
@@ -493,7 +555,7 @@ export function SearchPage() {
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground -ml-4 pointer-events-none" />
               </div>
               <button
-                onClick={() => setPage(1)}
+                onClick={() => { pushRecentSearch(searchInput); setPage(1) }}
                 className="hidden sm:flex bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm px-5 my-1.5 mr-1.5 rounded-full transition-colors items-center gap-1.5"
               >
                 <Search className="h-4 w-4" /> Tìm
@@ -541,12 +603,12 @@ export function SearchPage() {
                     <Search className="h-4 w-4 text-muted-foreground shrink-0" />
                     <Input
                       placeholder="Tên lớp, môn học, tên gia sư... (vd: Lớp Toán 10)"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
                       className="border-0 shadow-none focus-visible:ring-0 px-0 h-10 text-sm font-medium placeholder:font-normal"
                     />
-                    {search && (
-                      <button onClick={() => setSearch('')} aria-label="Xóa từ khóa" className="text-muted-foreground hover:text-foreground">
+                    {searchInput && (
+                      <button onClick={() => setSearchInput('')} aria-label="Xóa từ khóa" className="text-muted-foreground hover:text-foreground">
                         <X className="h-4 w-4" />
                       </button>
                     )}
@@ -634,6 +696,34 @@ export function SearchPage() {
             ))}
           </div>
           )}
+
+          {/* Hàng 3: chip môn học kèm số gia sư — lọc theo môn (chỉ tab gia sư) */}
+          {resultTab === 'tutors' && subjects.length > 0 && (
+          <div className="row-scroll items-center" style={{ gap: '0.5rem' }}>
+            <span className="text-xs font-semibold text-muted-foreground shrink-0 pr-1">Môn học</span>
+            <button
+              className={`chip ${!subjectSlug ? 'is-active' : ''}`}
+              onClick={() => setSubjectSlug('')}
+            >
+              Tất cả
+            </button>
+            {subjects.slice(0, 14).map(s => (
+              <button
+                key={s.id}
+                className={`chip ${subjectSlug === s.slug ? 'is-active' : ''}`}
+                onClick={() => {
+                  // Chọn môn để DUYỆT → bỏ text search (2 filter text+subject dễ đánh nhau ra 0 kết quả)
+                  setSubjectSlug(subjectSlug === s.slug ? '' : s.slug)
+                  if (searchInput) { setSearchInput(''); setSearch('') }
+                }}
+                title={`${s.name} — ${s.tutorCount} gia sư`}
+              >
+                <BookOpen className="h-4 w-4" /> {s.name}
+                <span className="opacity-60">({s.tutorCount})</span>
+              </button>
+            ))}
+          </div>
+          )}
         </div>
       </div>
 
@@ -680,7 +770,7 @@ export function SearchPage() {
                 </p>
                 <Button
                   variant="outline" className="rounded-full"
-                  onClick={() => { setClassDay(null); setClassMeetType(''); setSearch(''); setCity('') }}
+                  onClick={() => { setClassDay(null); setClassMeetType(''); setSearchInput(''); setSearch(''); setCity('') }}
                 >
                   Xóa bộ lọc
                 </Button>
@@ -697,7 +787,7 @@ export function SearchPage() {
         <>
         {/* Toolbar */}
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <h2 className="text-lg font-extrabold">
               {loading ? 'Đang tìm...' : `${total} gia sư phù hợp`}
             </h2>
@@ -705,6 +795,27 @@ export function SearchPage() {
               <span className="text-sm text-muted-foreground hidden sm:inline">
                 · trang {page}/{Math.max(totalPages, 1)}
               </span>
+            )}
+            {/* Chip bộ lọc đang bật — bỏ nhanh 1 click */}
+            {subjectSlug && (() => {
+              const subj = subjects.find(s => s.slug === subjectSlug)
+              return (
+                <button
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+                  onClick={() => setSubjectSlug('')}
+                >
+                  <BookOpen className="h-3 w-3" /> {subj?.name || subjectSlug}
+                  <X className="h-3 w-3" />
+                </button>
+              )
+            })()}
+            {search && (
+              <button
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-muted text-foreground text-xs font-bold hover:bg-muted/70 transition-colors"
+                onClick={() => { setSearchInput(''); setSearch('') }}
+              >
+                “{search}” <X className="h-3 w-3" />
+              </button>
             )}
             {pickMode && (
               <Badge className="bg-primary gap-1 rounded-full">
@@ -801,12 +912,12 @@ export function SearchPage() {
                 </Card>
               ))}
               {!loading && tutors.map(t => (
-                <button
+                <div
                   key={t.id}
                   onClick={() => setSelectedId(t.id)}
-                  className={`w-full text-left transition-all ${selectedId === t.id ? 'opacity-100' : 'opacity-90 hover:opacity-100'}`}
+                  className={`w-full text-left transition-all cursor-pointer ${selectedId === t.id ? 'opacity-100' : 'opacity-90 hover:opacity-100'}`}
                 >
-                  <Card className={`p-3 cursor-pointer transition-all rounded-2xl ${selectedId === t.id ? 'ring-2 ring-primary' : 'hover:shadow-e2'}`}>
+                  <Card className={`p-3 transition-all rounded-2xl ${selectedId === t.id ? 'ring-2 ring-primary' : 'hover:shadow-e2'}`}>
                     <div className="flex gap-3 items-center">
                       <div className="h-12 w-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-extrabold text-lg shrink-0">
                         {t.name.charAt(0)}
@@ -826,11 +937,18 @@ export function SearchPage() {
                             <span className="text-[10px] text-muted-foreground">({t.reviewCount})</span>
                           </div>
                           <span className="text-xs font-extrabold text-primary">{formatVnd(t.minPrice)}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate({ name: 'tutor', id: t.id }) }}
+                            className="text-[11px] font-bold text-primary hover:underline ml-auto shrink-0"
+                          >
+                            Hồ sơ →
+                          </button>
                         </div>
                       </div>
+                      <FavoriteButton tutorId={t.id} tutorName={t.name} size="sm" />
                     </div>
                   </Card>
-                </button>
+                </div>
               ))}
             </div>
 

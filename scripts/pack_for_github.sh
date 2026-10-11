@@ -17,6 +17,31 @@ cp -r "$BASE/public"             "$STAGE/public"
 cp -r "$BASE/scripts"            "$STAGE/scripts"
 cp -r "$BASE/.github"            "$STAGE/.github"
 
+# ---- Schema cho PRODUCTION (repo GitHub dung PostgreSQL/Supabase) ----
+python3 - << 'PYEOF'
+import os
+p = os.path.join(os.environ.get('STAGE', '/home/z/my-project/.stage-zip/EXE101-turlean'), 'prisma/schema.prisma')
+local = open(p).read()
+old_ds = '''datasource db {
+  provider  = "sqlite"
+  url       = env("DATABASE_URL")
+  // Sandbox local: SQLite (để live preview không cần PostgreSQL/Supabase)
+  // Bản production trên GitHub dùng postgresql + DIRECT_URL (Supabase)
+}'''
+new_ds = '''datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  // Production: PostgreSQL (Supabase / Neon / Vercel Postgres)
+  // DIRECT_URL cần thiết cho Prisma Migrate khi dùng pooled DATABASE_URL
+}'''
+if old_ds in local:
+    open(p, 'w').write(local.replace(old_ds, new_ds))
+    print('  (schema.prisma ZIP: PostgreSQL cho production)')
+else:
+    print('  (schema.prisma: giu nguyen — khong thay datasource SQLite)')
+PYEOF
+
 # ---- File cấu hình ----
 for f in .gitignore .env.example .dockerignore \
          package.json bun.lock tsconfig.json next.config.ts \

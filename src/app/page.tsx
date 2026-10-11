@@ -12,6 +12,7 @@ import { DashboardPage } from '@/components/pages/dashboard-page'
 import { ProfileEditPage } from '@/components/pages/profile-edit-page'
 import { OnboardingPage } from '@/components/pages/onboarding-page'
 import { MessagesPage } from '@/components/pages/messages-page'
+import { FavoritesPage } from '@/components/pages/favorites-page'
 
 export default function Home() {
   const { view, user, setUser, navigate } = useApp()
@@ -39,7 +40,7 @@ export default function Home() {
   const renderView = () => {
     switch (view.name) {
       case 'home': return <HomePage />
-      case 'search': return <SearchPage />
+      case 'search': return <SearchPage key={JSON.stringify(view)} />
       case 'tutor': return <TutorProfilePage id={view.id} />
       case 'login': return <AuthPage initialMode="login" />
       case 'register': return <AuthPage initialMode="register" />
@@ -50,6 +51,7 @@ export default function Home() {
       case 'manage-subjects': return <DashboardPage />
       case 'manage-availability': return <DashboardPage />
       case 'messages': return <MessagesPage initialConversationId={view.conversationId} />
+      case 'favorites': return <FavoritesPage />
       case 'my-profile': return user ? <TutorProfilePage id={user.id} /> : <HomePage />
       default: return <HomePage />
     }

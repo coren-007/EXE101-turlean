@@ -2,8 +2,23 @@ import { create } from 'zustand'
 
 export type View =
   | { name: 'home' }
-  | { name: 'search'; subject?: string; mode?: string; lat?: number; lng?: number; district?: string }
+  | {
+      name: 'search'
+      // Filter tìm kiếm — đồng bộ đầy đủ vào URL để chia sẻ được link kết quả
+      q?: string
+      subject?: string
+      city?: string
+      mode?: string
+      district?: string
+      level?: string
+      maxPrice?: number
+      minRating?: number
+      sort?: string
+      lat?: number
+      lng?: number
+    }
   | { name: 'tutor'; id: string; classId?: string }
+  | { name: 'favorites' }
   | { name: 'login' }
   | { name: 'register' }
   | { name: 'dashboard'; tab?: 'overview' | 'subjects' | 'schedule' | 'classes' }
@@ -38,9 +53,15 @@ function parseInitialView(): View {
   if (v === 'search') {
     return {
       name: 'search',
+      q: params.get('q') || undefined,
       subject: params.get('subject') || undefined,
+      city: params.get('city') || undefined,
       mode: params.get('mode') || undefined,
       district: params.get('district') || undefined,
+      level: params.get('level') || undefined,
+      maxPrice: params.get('maxPrice') ? Number(params.get('maxPrice')) : undefined,
+      minRating: params.get('minRating') ? Number(params.get('minRating')) : undefined,
+      sort: params.get('sort') || undefined,
       lat: params.get('lat') ? Number(params.get('lat')) : undefined,
       lng: params.get('lng') ? Number(params.get('lng')) : undefined,
     }
@@ -48,6 +69,7 @@ function parseInitialView(): View {
   if (v === 'tutor' && params.get('id')) {
     return { name: 'tutor', id: params.get('id')!, classId: params.get('class') || undefined }
   }
+  if (v === 'favorites') return { name: 'favorites' }
   if (v === 'login') return { name: 'login' }
   if (v === 'register') return { name: 'register' }
   if (v === 'dashboard') {
@@ -69,11 +91,19 @@ function updateUrl(view: View) {
   const params = new URLSearchParams()
   if (view.name === 'search') {
     params.set('view', 'search')
+    if (view.q) params.set('q', view.q)
     if (view.subject) params.set('subject', view.subject)
+    if (view.city) params.set('city', view.city)
     if (view.mode) params.set('mode', view.mode)
     if (view.district) params.set('district', view.district)
+    if (view.level) params.set('level', view.level)
+    if (view.maxPrice != null) params.set('maxPrice', String(view.maxPrice))
+    if (view.minRating != null) params.set('minRating', String(view.minRating))
+    if (view.sort) params.set('sort', view.sort)
     if (view.lat) params.set('lat', String(view.lat))
     if (view.lng) params.set('lng', String(view.lng))
+  } else if (view.name === 'favorites') {
+    params.set('view', 'favorites')
   } else if (view.name === 'tutor') {
     params.set('view', 'tutor')
     params.set('id', view.id)

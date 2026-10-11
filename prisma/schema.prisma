@@ -56,6 +56,25 @@ model User {
   classEnrollments  ClassEnrollment[] @relation("ClassEnrollmentStudent")
   classAttendance   ClassAttendance[] @relation("ClassAttendanceStudent")
   feePayments       ClassFeePayment[] @relation("ClassFeePaymentStudent")
+  // Gia sư yêu thích (wishlist) — đã lưu bởi user này
+  favoritesGiven    Favorite[]       @relation("FavoriteOwner")
+  favoriteTutors    Favorite[]       @relation("FavoriteTutor")
+}
+
+// ===== Gia sư yêu thích (wishlist) =====
+// User lưu gia sư quan tâm — đồng bộ theo tài khoản (không mất khi đổi máy).
+// Guest chưa đăng nhập thì fallback localStorage phía client, tự merge lên DB khi login.
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  tutorId   String
+  createdAt DateTime @default(now())
+
+  owner User @relation("FavoriteOwner", fields: [userId], references: [id], onDelete: Cascade)
+  tutor User @relation("FavoriteTutor", fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tutorId])
+  @@index([userId])
 }
 
 // ===== Ngày nghỉ lễ toàn hệ thống =====

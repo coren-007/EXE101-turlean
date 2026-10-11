@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { TutorCard, Tutor } from '@/components/tutor-card'
+import { SearchSuggest, pushRecentSearch, SuggestSubject } from '@/components/search-suggest'
 import {
   Search, MapPin, Home, School, Star, ShieldCheck,
   Calculator, Atom, FlaskConical, MessageCircle, GraduationCap,
@@ -116,11 +117,22 @@ export function HomePage() {
       .catch(() => setLoading(false))
   }, [])
 
-  const handleSearch = () => {
+  const handleSearch = (term?: string) => {
+    const q = term !== undefined ? term : searchQ
+    pushRecentSearch(q)
     navigate({
       name: 'search',
-      subject: searchQ || undefined,
-      ...(city !== 'Tất cả' ? { district: city } : {}),
+      q: q || undefined,
+      ...(city !== 'Tất cả' ? { city } : {}),
+    })
+  }
+
+  // Chọn môn từ gợi ý autocomplete → sang trang tìm kiếm lọc theo môn
+  const handlePickSubject = (s: SuggestSubject) => {
+    navigate({
+      name: 'search',
+      subject: s.slug,
+      ...(city !== 'Tất cả' ? { city } : {}),
     })
   }
 
@@ -155,16 +167,16 @@ export function HomePage() {
               Chọn buổi, đặt lịch và bắt đầu học — chỉ trong vài phút.
             </p>
 
-            {/* Search pill — kiểu Airbnb */}
+            {/* Search pill — kiểu Airbnb, kèm autocomplete gợi ý môn + gia sư */}
             <div className="search-pill max-w-2xl mx-auto flex-col md:flex-row">
-              <div className="flex items-center gap-2 flex-1 px-5 py-3 md:py-0 md:px-4 md:border-0 border-b md:border-b-0">
-                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-                <Input
-                  placeholder="Môn học, tên gia sư... (vd: Toán, IELTS, Piano)"
+              <div className="flex items-center gap-2 flex-1 w-full px-5 py-3 md:py-0 md:px-4 md:border-0 border-b md:border-b-0">
+                <SearchSuggest
+                  className="flex-1 min-w-0"
+                  autoFocus={false}
                   value={searchQ}
-                  onChange={(e) => setSearchQ(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="border-0 shadow-none focus-visible:ring-0 px-0 h-9 text-sm font-medium placeholder:font-normal"
+                  onChange={setSearchQ}
+                  onSubmit={(term) => handleSearch(term)}
+                  onPickSubject={handlePickSubject}
                 />
               </div>
               <div className="pill-sep hidden md:block" />
@@ -180,7 +192,7 @@ export function HomePage() {
                 </select>
               </div>
               <button
-                onClick={handleSearch}
+                onClick={() => handleSearch()}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm px-7 py-3 md:py-0 md:my-2 md:mr-2 rounded-full transition-colors flex items-center gap-2 justify-center"
               >
                 <Search className="h-4 w-4" /> Tìm kiếm

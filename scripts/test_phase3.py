@@ -176,13 +176,23 @@ print('\n=== B2. Nghỉ buổi kèm dạy bù ===')
 future = next((s for s in toan10['sessions'] if s['status'] == 'SCHEDULED' and s['date'] >= today.isoformat() and not s.get('makeupForId')), None)
 check('có buổi tương lai để nghỉ + xếp bù', future is not None)
 if future:
-    makeup_date = (today + timedelta(days=10)).isoformat()
-    st, out = req('PATCH', f"/api/classes/{toan10['id']}/sessions/{future['id']}", {
-        'action': 'cancel', 'reason': 'test nghỉ buổi có bù',
-        'makeup': {'date': makeup_date, 'startTime': future['startTime'], 'endTime': future['endTime']},
-    }, role='tutor')
+    # Chọn ngày bù trống: thử lần lượt các offset (tránh bội 7 để không trùng lịch tuần
+    # thường lệ; nếu trúng buổi đã có — kể cả buổi bù từ lần chạy test trước — server
+    # trả 409 ATOMIC (chưa hủy buổi gốc) nên thử offset kế tiếp an toàn).
+    st, out, makeup_date = None, None, None
+    for off in (10, 9, 11, 8, 12, 13, 15, 16, 17, 18, 19, 20):
+        cand = (today + timedelta(days=off)).isoformat()
+        st, out = req('PATCH', f"/api/classes/{toan10['id']}/sessions/{future['id']}", {
+            'action': 'cancel', 'reason': 'test nghỉ buổi có bù',
+            'makeup': {'date': cand, 'startTime': future['startTime'], 'endTime': future['endTime']},
+        }, role='tutor')
+        if st == 200:
+            makeup_date = cand
+            break
     check('PATCH cancel + makeup tạo buổi bù', st == 200 and out.get('makeupSession', {}).get('makeupForId') == future['id'],
           f'st={st} err={out.get("error","")}')
+    if not makeup_date:
+        makeup_date = (today + timedelta(days=10)).isoformat()
     check('message nhắc DẠY BÙ', 'DẠY BÙ' in out.get('message', ''))
 
     st, out = req('GET', '/api/classes/mine', role='tutor')
