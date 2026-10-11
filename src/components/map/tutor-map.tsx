@@ -125,6 +125,25 @@ function ClickHandler({ onPick }: { onPick: (lat: number, lng: number) => void }
   return null
 }
 
+// P5: theo dõi pan/zoom — báo tâm + bán kính nhìn thấy (cho "Tìm trong khu vực này")
+function MoveWatcher({ onAreaChange }: { onAreaChange: (lat: number, lng: number, radiusKm: number) => void }) {
+  useMapEvents({
+    moveend(e: any) {
+      const map = e.target
+      const c = map.getCenter()
+      const ne = map.getBounds().getNorthEast()
+      // Khoảng cách tâm → góc Đông-Bắc của khung nhìn (km) — xấp xỉ bán kính khu vực
+      const R = 6371
+      const dLat = (ne.lat - c.lat) * Math.PI / 180
+      const dLng = (ne.lng - c.lng) * Math.PI / 180
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(c.lat * Math.PI / 180) * Math.cos(ne.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+      const radius = Math.max(1, Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))))
+      onAreaChange(c.lat, c.lng, radius)
+    },
+  })
+  return null
+}
+
 // Custom zoom controls (top-right)
 function CustomControls({ onLocate, onToggleLayer, layer }: {
   onLocate: () => void
@@ -281,6 +300,8 @@ export interface TutorMapProps {
   pickedLat?: number
   pickedLng?: number
   onLocate?: () => void
+  // P5: map search-as-you-move — báo khi người dùng pan/zoom bản đồ
+  onAreaChange?: (lat: number, lng: number, radiusKm: number) => void
 }
 
 export function TutorMap({
@@ -295,6 +316,7 @@ export function TutorMap({
   pickedLat,
   pickedLng,
   onLocate,
+  onAreaChange,
 }: TutorMapProps) {
   const ready = useLeaflet()
   const [layer, setLayer] = useState<'street' | 'satellite'>('street')
@@ -399,6 +421,9 @@ export function TutorMap({
       {pickMode && onPickLocation && (
         <ClickHandler onPick={onPickLocation} />
       )}
+
+      {/* P5: theo dõi pan/zoom cho "Tìm trong khu vực này" */}
+      {onAreaChange && !pickMode && <MoveWatcher onAreaChange={onAreaChange} />}
 
       {pickMode && onCancelPick && <PickBanner onCancel={onCancelPick} />}
 

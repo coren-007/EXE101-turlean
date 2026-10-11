@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react'
 import { useApp } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -17,7 +17,8 @@ import { FavoriteButton } from '@/components/favorite-button'
 import {
   Search, MapPin, Home, School, SlidersHorizontal, LayoutGrid, Map as MapIcon,
   X, Navigation, Star, GraduationCap, Video, ChevronLeft, ChevronRight, ChevronDown,
-  Users, CalendarClock, Hourglass, BadgeCheck, Clock, BookOpen
+  Users, CalendarClock, Hourglass, BadgeCheck, Clock, BookOpen,
+  Sunrise, Sun, MoonStar, LocateFixed, Sparkles
 } from 'lucide-react'
 import { formatVnd, formatVndShort, formatDate, CLASS_DAY_NAMES, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
@@ -47,6 +48,10 @@ interface SavedFilters {
   userLng?: number
   pickedLat?: number
   pickedLng?: number
+  // P5
+  availDay?: number
+  availSlot?: string
+  verified?: boolean
 }
 
 function loadSavedFilters(): Partial<SavedFilters> {
@@ -110,6 +115,13 @@ interface ClassDiscoverItem {
 
 const DAY_FILTERS = [1, 2, 3, 4, 5, 6, 0]
 
+// P5: khung giờ trong ngày — nhãn chip + giá trị param API
+const SLOT_CHIPS = [
+  { value: 'morning', label: 'Sáng', icon: Sunrise },
+  { value: 'afternoon', label: 'Chiều', icon: Sun },
+  { value: 'evening', label: 'Tối', icon: MoonStar },
+]
+
 export function SearchPage() {
   const { view, navigate } = useApp()
   // Tham số từ URL/navigation — ưu tiên cao hơn localStorage khi có (link chia sẻ được)
@@ -117,6 +129,7 @@ export function SearchPage() {
     q?: string; subject?: string; city?: string; mode?: string; district?: string
     level?: string; maxPrice?: number; minRating?: number; sort?: string
     lat?: number; lng?: number
+    availDay?: number; availSlot?: string; verified?: boolean; page?: number; radius?: number
   } = view.name === 'search' ? view : {}
   const saved = typeof window !== 'undefined' ? loadSavedFilters() : {}
 
@@ -153,6 +166,11 @@ export function SearchPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'map'>(saved.viewMode || 'grid')
   const [selectedId, setSelectedId] = useState<string | undefined>()
 
+  // P5: lọc khung giờ dạy (T2-CN + Sáng/Chiều/Tối) + gia sư đã xác minh
+  const [availDay, setAvailDay] = useState<number | null>(initial.availDay ?? saved.availDay ?? null)
+  const [availSlot, setAvailSlot] = useState<string>(initial.availSlot || saved.availSlot || '')
+  const [verifiedOnly, setVerifiedOnly] = useState<boolean>(initial.verified ?? saved.verified ?? false)
+
   // User location (geolocation)
   const [userLat, setUserLat] = useState<number | undefined>(initial.lat || saved.userLat)
   const [userLng, setUserLng] = useState<number | undefined>(initial.lng || saved.userLng)
@@ -163,13 +181,48 @@ export function SearchPage() {
   const [pickedLng, setPickedLng] = useState<number | undefined>(saved.pickedLng)
   const [pickMode, setPickMode] = useState(false)
 
+  // P5: bán kính tìm kiếm quanh vị trí (mặc định 15km — tăng khi "Tìm trong khu vực này" từ bản đồ)
+  const [searchRadius, setSearchRadius] = useState<number>(
+    initial.radius ? Math.max(2, Math.min(50, Math.round(initial.radius))) : 15
+  )
+
+  // P5: map search-as-you-move — hiện nút "Tìm trong khu vực này" khi người dùng pan/zoom
+  // khỏi tâm đang tìm (so tâm hiện tại + bán kính; bỏ qua moveend do fitBounds ban đầu)
+  const [mapArea, setMapArea] = useState<{ lat: number; lng: number; radius: number } | null>(null)
+  const searchedCenterRef = useRef<{ lat: number; lng: number } | null>(null)
+
+  const handleMapAreaChange = (lat: number, lng: number, radius: number) => {
+    const searched = searchedCenterRef.current
+    // Cùng tâm (fitBounds ban đầu) → không hiện nút
+    if (searched && Math.abs(searched.lat - lat) < 0.005 && Math.abs(searched.lng - lng) < 0.005) {
+      setMapArea(null)
+      return
+    }
+    setMapArea({ lat, lng, radius: Math.max(2, Math.min(50, Math.round(radius))) })
+  }
+
+  const applyMapArea = () => {
+    if (!mapArea) return
+    searchedCenterRef.current = { lat: mapArea.lat, lng: mapArea.lng }
+    // Dùng picked (vị trí chọn tay) để lưu tâm mới + bán kính từ cấp zoom hiện tại
+    setPickedLat(mapArea.lat)
+    setPickedLng(mapArea.lng)
+    setUserLat(undefined)
+    setUserLng(undefined)
+    setSearchRadius(Math.max(2, Math.min(50, Math.round(mapArea.radius))))
+    setMapArea(null)
+    if (sort !== 'distance') setSort('distance')
+    toast.success(`Đang tìm gia sư trong bán kính ~${Math.round(mapArea.radius)}km quanh vị trí bản đồ`)
+  }
+
   // Persist filters to localStorage whenever they change
   useEffect(() => {
     saveFilters({
       search, city, level, mode, maxPrice, minRating, sort, viewMode,
       userLat, userLng, pickedLat, pickedLng,
+      availDay: availDay ?? undefined, availSlot: availSlot || undefined, verified: verifiedOnly || undefined,
     })
-  }, [search, city, level, mode, maxPrice, minRating, sort, viewMode, userLat, userLng, pickedLat, pickedLng])
+  }, [search, city, level, mode, maxPrice, minRating, sort, viewMode, userLat, userLng, pickedLat, pickedLng, availDay, availSlot, verifiedOnly])
 
   // Load locations on mount
   useEffect(() => {
@@ -247,6 +300,13 @@ export function SearchPage() {
   const effectiveLat = userLat ?? pickedLat
   const effectiveLng = userLng ?? pickedLng
 
+  // Cập nhật tâm "đã tìm" mỗi lần query đổi — dùng để so sánh khi map pan
+  useEffect(() => {
+    if (effectiveLat != null && effectiveLng != null) {
+      searchedCenterRef.current = { lat: effectiveLat, lng: effectiveLng }
+    }
+  }, [effectiveLat, effectiveLng])
+
   // Build query string and fetch (kèm page + pageSize)
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
@@ -254,10 +314,10 @@ export function SearchPage() {
   // Chữ ký bộ lọc — đổi filter tự động reset về trang 1 (derived state,
   // tránh setState-in-effect)
   const filterSignature = useMemo(() =>
-    JSON.stringify([search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort]),
-    [search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort]
+    JSON.stringify([search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort, availDay, availSlot, verifiedOnly]),
+    [search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort, availDay, availSlot, verifiedOnly]
   )
-  const [pageState, setPageState] = useState({ sig: filterSignature, page: 1 })
+  const [pageState, setPageState] = useState({ sig: filterSignature, page: initial.page ?? 1 })
   const page = pageState.sig === filterSignature ? pageState.page : 1
   const setPage = (updater: number | ((p: number) => number)) => {
     const next = typeof updater === 'function' ? (updater as (p: number) => number)(page) : updater
@@ -277,13 +337,16 @@ export function SearchPage() {
     if (effectiveLat != null && effectiveLng != null) {
       params.set('lat', String(effectiveLat))
       params.set('lng', String(effectiveLng))
-      params.set('radius', '15')
+      params.set('radius', String(searchRadius))
     }
+    if (availDay != null) params.set('availDay', String(availDay))
+    if (availSlot) params.set('availSlot', availSlot)
+    if (verifiedOnly) params.set('verified', 'true')
     params.set('sort', sort)
     params.set('page', String(page))
     params.set('pageSize', '12')
     return params.toString()
-  }, [search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort, page])
+  }, [search, subjectSlug, city, district, level, mode, maxPrice, minRating, effectiveLat, effectiveLng, sort, page, availDay, availSlot, verifiedOnly, searchRadius])
 
   // Fetch kèm AbortController — hủy request cũ khi filter đổi nhanh (gõ chữ/chuyển trang)
   useEffect(() => {
@@ -321,10 +384,14 @@ export function SearchPage() {
     if (effectiveLat != null && effectiveLng != null) {
       params.set('lat', String(effectiveLat))
       params.set('lng', String(effectiveLng))
+      if (searchRadius !== 15) params.set('radius', String(searchRadius))
     }
+    if (availDay != null) params.set('availDay', String(availDay))
+    if (availSlot) params.set('availSlot', availSlot)
+    if (verifiedOnly) params.set('verified', 'true')
     if (page > 1) params.set('page', String(page))
     window.history.replaceState({}, '', `/?${params.toString()}`)
-  }, [search, subjectSlug, city, district, level, mode, maxPrice, minRating, sort, effectiveLat, effectiveLng, page])
+  }, [search, subjectSlug, city, district, level, mode, maxPrice, minRating, sort, effectiveLat, effectiveLng, page, availDay, availSlot, verifiedOnly, searchRadius])
 
   // ===== Fetch lớp học nhóm khi tab "Lớp học" đang mở =====
   useEffect(() => {
@@ -351,6 +418,22 @@ export function SearchPage() {
     return () => { cancelled = true }
   }, [resultTab, search, city, classDay, classMeetType, classSort])
 
+  // P5: empty state gợi ý — khi 0 kết quả, lấy 4 gia sư đánh giá cao làm "Có thể bạn quan tâm"
+  const [suggested, setSuggested] = useState<Tutor[]>([])
+  useEffect(() => {
+    if (loading || resultTab !== 'tutors' || tutors.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSuggested([])
+      return
+    }
+    let cancelled = false
+    fetch('/api/tutors?sort=rating&pageSize=4')
+      .then(r => r.ok ? r.json() : { tutors: [] })
+      .then(data => { if (!cancelled) setSuggested(data.tutors || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [loading, resultTab, tutors.length])
+
   const activeFilterCount =
     (city ? 1 : 0) +
     (district ? 1 : 0) +
@@ -359,7 +442,10 @@ export function SearchPage() {
     (mode ? 1 : 0) +
     (maxPrice < 800000 ? 1 : 0) +
     (minRating > 0 ? 1 : 0) +
-    (effectiveLat != null ? 1 : 0)
+    (effectiveLat != null ? 1 : 0) +
+    (availDay != null ? 1 : 0) +
+    (availSlot ? 1 : 0) +
+    (verifiedOnly ? 1 : 0)
 
   const clearFilters = () => {
     setCity('')
@@ -371,6 +457,9 @@ export function SearchPage() {
     setMinRating(0)
     setSearchInput('')
     setSearch('')
+    setAvailDay(null)
+    setAvailSlot('')
+    setVerifiedOnly(false)
     clearLocation()
   }
 
@@ -566,7 +655,10 @@ export function SearchPage() {
             <Button
               variant="outline"
               className={`h-11 rounded-full font-semibold shrink-0 ${effectiveLat != null ? 'border-primary text-primary' : ''}`}
-              onClick={effectiveLat != null && userLat == null ? clearLocation : detectLocation}
+              // P5: nút giờ là toggle — đang lọc theo vị trí thì bấm để BỎ lọc
+              // (luôn thoát được khỏi trạng thái "gần bạn", bất kể nguồn GPS/chọn tay);
+              // chưa lọc thì bấm để định vị GPS
+              onClick={effectiveLat != null ? clearLocation : detectLocation}
               disabled={locating}
               title="Dùng GPS định vị quanh bạn"
             >
@@ -697,7 +789,46 @@ export function SearchPage() {
           </div>
           )}
 
-          {/* Hàng 3: chip môn học kèm số gia sư — lọc theo môn (chỉ tab gia sư) */}
+          {/* Hàng 3 (P5): chip khung giờ dạy + đã xác minh — kết nối lịch rảnh thật của gia sư */}
+          {resultTab === 'tutors' && (
+          <div className="row-scroll items-center" style={{ gap: '0.5rem' }}>
+            <span className="text-xs font-semibold text-muted-foreground shrink-0 pr-1">Học vào</span>
+            {DAY_FILTERS.map(d => (
+              <button
+                key={d}
+                className={`chip ${availDay === d ? 'is-active' : ''}`}
+                onClick={() => setAvailDay(availDay === d ? null : d)}
+                title={`Chỉ gia sư rảnh ${CLASS_DAY_NAMES[d]}`}
+              >
+                {CLASS_DAY_NAMES[d]}
+              </button>
+            ))}
+            <div className="w-px h-6 bg-border shrink-0" />
+            {SLOT_CHIPS.map(s => {
+              const Icon = s.icon
+              return (
+                <button
+                  key={s.value}
+                  className={`chip ${availSlot === s.value ? 'is-active' : ''}`}
+                  onClick={() => setAvailSlot(availSlot === s.value ? '' : s.value)}
+                  title={availDay != null ? `Rảnh ${s.label.toLowerCase()} ${CLASS_DAY_NAMES[availDay]}` : `Rảnh ${s.label.toLowerCase()} — mọi ngày trong tuần`}
+                >
+                  <Icon className="h-4 w-4" /> {s.label}
+                </button>
+              )
+            })}
+            <div className="w-px h-6 bg-border shrink-0" />
+            <button
+              className={`chip ${verifiedOnly ? 'is-active' : ''}`}
+              onClick={() => setVerifiedOnly(v => !v)}
+              title="Chỉ gia sư đã xác minh danh tính"
+            >
+              <BadgeCheck className="h-4 w-4" /> Đã xác minh
+            </button>
+          </div>
+          )}
+
+          {/* Hàng 4: chip môn học kèm số gia sư — lọc theo môn (chỉ tab gia sư) */}
           {resultTab === 'tutors' && subjects.length > 0 && (
           <div className="row-scroll items-center" style={{ gap: '0.5rem' }}>
             <span className="text-xs font-semibold text-muted-foreground shrink-0 pr-1">Môn học</span>
@@ -817,6 +948,24 @@ export function SearchPage() {
                 “{search}” <X className="h-3 w-3" />
               </button>
             )}
+            {/* P5: chip bộ lọc mới — bỏ nhanh 1 click */}
+            {(availDay != null || availSlot) && (
+              <button
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+                onClick={() => { setAvailDay(null); setAvailSlot('') }}
+              >
+                <Clock className="h-3 w-3" /> Rảnh {availDay != null ? CLASS_DAY_NAMES[availDay] : 'mọi ngày'}{availSlot ? ` · ${SLOT_CHIPS.find(s => s.value === availSlot)?.label.toLowerCase()}` : ''}
+                <X className="h-3 w-3" />
+              </button>
+            )}
+            {verifiedOnly && (
+              <button
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-colors"
+                onClick={() => setVerifiedOnly(false)}
+              >
+                <BadgeCheck className="h-3 w-3" /> Đã xác minh <X className="h-3 w-3" />
+              </button>
+            )}
             {pickMode && (
               <Badge className="bg-primary gap-1 rounded-full">
                 <MapPin className="h-3 w-3" /> Click bản đồ để chọn vị trí
@@ -855,12 +1004,29 @@ export function SearchPage() {
                 ))}
               </div>
             ) : tutors.length === 0 ? (
-              <Card className="p-12 text-center rounded-2xl">
-                <Search className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-                <h3 className="font-bold text-lg mb-1">Không tìm thấy gia sư phù hợp</h3>
-                <p className="text-sm text-muted-foreground mb-4">Thử bỏ bớt bộ lọc hoặc đổi từ khóa khác</p>
-                <Button variant="outline" className="rounded-full" onClick={clearFilters}>Xóa bộ lọc</Button>
-              </Card>
+              <div className="space-y-6">
+                <Card className="p-12 text-center rounded-2xl">
+                  <Search className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                  <h3 className="font-bold text-lg mb-1">Không tìm thấy gia sư phù hợp</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Thử bỏ bớt bộ lọc hoặc đổi từ khóa khác</p>
+                  <Button variant="outline" className="rounded-full" onClick={clearFilters}>Xóa toàn bộ bộ lọc</Button>
+                </Card>
+                {/* P5: gợi ý thay thế dead-end — "Có thể bạn quan tâm" */}
+                {suggested.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-3">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      <h4 className="font-bold text-sm">Có thể bạn quan tâm</h4>
+                      <span className="text-xs text-muted-foreground">— gia sư được đánh giá cao nhất</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                      {suggested.map(t => (
+                        <TutorCard key={t.id} tutor={t} compact />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                 {tutors.map(t => (
@@ -971,8 +1137,20 @@ export function SearchPage() {
                   onSelect={setSelectedId}
                   selectedId={selectedId}
                   onLocate={detectLocation}
+                  onAreaChange={handleMapAreaChange}
                 />
               </Suspense>
+              {/* P5: nút "Tìm trong khu vực này" — hiện khi người dùng pan/zoom bản đồ */}
+              {mapArea && !pickMode && (
+                <button
+                  onClick={applyMapArea}
+                  className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] px-4 py-2.5 rounded-full text-sm font-bold shadow-e3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors animate-in fade-in slide-in-from-top-2 duration-300"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <LocateFixed className="h-4 w-4" /> Tìm trong khu vực này (~{Math.round(mapArea.radius)}km)
+                  </span>
+                </button>
+              )}
               {/* Nút bật chế độ chọn vị trí */}
               <button
                 onClick={() => setPickMode(p => !p)}

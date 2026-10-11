@@ -31,6 +31,7 @@ export default function Home() {
             avatar: data.user.avatar,
             phone: data.user.phone,
             district: data.user.district,
+            city: data.user.city,
           })
         }
       })

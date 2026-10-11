@@ -59,6 +59,10 @@ model User {
   // Gia sư yêu thích (wishlist) — đã lưu bởi user này
   favoritesGiven    Favorite[]       @relation("FavoriteOwner")
   favoriteTutors    Favorite[]       @relation("FavoriteTutor")
+
+  // P5: index cho truy vấn tìm kiếm (where role=TUTOR + city + hourlyRate range)
+  @@index([role, city])
+  @@index([hourlyRate])
 }
 
 // ===== Gia sư yêu thích (wishlist) =====
@@ -178,6 +182,9 @@ model Availability {
   startTime  String  // HH:MM
   endTime    String  // HH:MM
   tutor      User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  // P5: index cho lọc tìm kiếm theo khung giờ (where tutorId + dayOfWeek)
+  @@index([tutorId, dayOfWeek])
 }
 
 // Mục đích 2 — kết nối 2 bên: hội thoại 1-1 giữa gia sư và phụ huynh/học sinh.

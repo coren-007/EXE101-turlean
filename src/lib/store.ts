@@ -16,6 +16,12 @@ export type View =
       sort?: string
       lat?: number
       lng?: number
+      // P5: lọc khung giờ dạy + gia sư đã xác minh + số trang
+      availDay?: number
+      availSlot?: string
+      verified?: boolean
+      page?: number
+      radius?: number
     }
   | { name: 'tutor'; id: string; classId?: string }
   | { name: 'favorites' }
@@ -39,6 +45,7 @@ interface AppState {
     avatar?: string | null
     phone?: string | null
     district?: string | null
+    city?: string | null
   } | null
   navigate: (view: View) => void
   setUser: (user: AppState['user']) => void
@@ -64,6 +71,11 @@ function parseInitialView(): View {
       sort: params.get('sort') || undefined,
       lat: params.get('lat') ? Number(params.get('lat')) : undefined,
       lng: params.get('lng') ? Number(params.get('lng')) : undefined,
+      availDay: params.get('availDay') !== null && !Number.isNaN(Number(params.get('availDay'))) ? Number(params.get('availDay')) : undefined,
+      availSlot: params.get('availSlot') || undefined,
+      verified: params.get('verified') === 'true' || undefined,
+      page: params.get('page') && !Number.isNaN(Number(params.get('page'))) ? Number(params.get('page')) : undefined,
+      radius: params.get('radius') && !Number.isNaN(Number(params.get('radius'))) ? Number(params.get('radius')) : undefined,
     }
   }
   if (v === 'tutor' && params.get('id')) {
@@ -102,6 +114,11 @@ function updateUrl(view: View) {
     if (view.sort) params.set('sort', view.sort)
     if (view.lat) params.set('lat', String(view.lat))
     if (view.lng) params.set('lng', String(view.lng))
+    if (view.availDay != null) params.set('availDay', String(view.availDay))
+    if (view.availSlot) params.set('availSlot', view.availSlot)
+    if (view.verified) params.set('verified', 'true')
+    if (view.page && view.page > 1) params.set('page', String(view.page))
+    if (view.radius != null && view.radius !== 15) params.set('radius', String(view.radius))
   } else if (view.name === 'favorites') {
     params.set('view', 'favorites')
   } else if (view.name === 'tutor') {

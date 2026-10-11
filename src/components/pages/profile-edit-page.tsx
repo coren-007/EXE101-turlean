@@ -64,6 +64,8 @@ export function ProfileEditPage() {
         setUser({
           ...user,
           name: data.user.name,
+          city: data.user.city ?? user?.city,
+          district: data.user.district ?? user?.district,
         })
       }
       toast.success('Đã lưu thông tin')

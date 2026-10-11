@@ -2,17 +2,34 @@
 
 // Trang "Gia sư đã lưu" (wishlist) — lưới TutorCard những gia sư user đã heart
 // Guest: đọc localStorage (tự merge lên DB khi đăng nhập); đã login: đọc DB.
+// P5: kèm dải "Đã xem gần đây" — quay lại hồ sơ vừa mở nhanh hơn (localStorage, không cần login).
 import { useEffect, useState } from 'react'
-import { Heart, Search } from 'lucide-react'
+import { Heart, Search, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TutorCard, Tutor } from '@/components/tutor-card'
 import { useApp } from '@/lib/store'
 import { useFavorites } from '@/lib/favorites'
+import { getRecentlyViewed } from '@/lib/recently-viewed'
 
 export function FavoritesPage() {
   const { user, navigate } = useApp()
   const { ids, load } = useFavorites()
   const [tutors, setTutors] = useState<Tutor[] | null>(null)
+
+  // P5: "Đã xem gần đây"
+  const [recent, setRecent] = useState<Tutor[]>([])
+  useEffect(() => {
+    const viewed = getRecentlyViewed()
+    if (viewed.length === 0) return
+    fetch(`/api/tutors?ids=${viewed.join(',')}`)
+      .then(r => r.ok ? r.json() : { tutors: [] })
+      .then(data => {
+        // Bỏ những ai đã nằm trong wishlist (tránh trùng lặp 2 khối)
+        const savedSet = new Set(ids)
+        setRecent((data.tutors || []).filter(t => !savedSet.has(t.id)).slice(0, 6))
+      })
+      .catch(() => {})
+  }, [ids.join(',')])
 
   // Load wishlist store theo role (guest → localStorage, login → DB)
   useEffect(() => {
@@ -90,6 +107,24 @@ export function FavoritesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {(tutors || []).map(t => <TutorCard key={t.id} tutor={t} />)}
           </div>
+        )}
+
+        {/* P5: dải "Đã xem gần đây" */}
+        {recent.length > 0 && (
+          <section className="mt-12">
+            <div className="flex items-center gap-2 mb-4">
+              <History className="h-5 w-5 text-muted-foreground" />
+              <h2 className="text-lg font-extrabold tracking-tight">Đã xem gần đây</h2>
+              <span className="text-xs text-muted-foreground">— những hồ sơ bạn vừa mở</span>
+            </div>
+            <div className="row-scroll">
+              {recent.map(t => (
+                <div key={t.id} className="w-[270px] sm:w-[290px]">
+                  <TutorCard tutor={t} compact />
+                </div>
+              ))}
+            </div>
+          </section>
         )}
       </div>
     </div>

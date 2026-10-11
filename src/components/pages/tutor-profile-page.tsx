@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useApp } from '@/lib/store'
 import { useFavorites } from '@/lib/favorites'
+import { pushRecentlyViewed } from '@/lib/recently-viewed'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -231,6 +232,8 @@ export function TutorProfilePage({ id }: { id: string }) {
     ])
       .then(([data, clsData]) => {
         setTutor(data)
+        // P5: ghi nhận "đã xem gần đây" (chỉ hồ sơ gia sư hợp lệ)
+        if (data?.id) pushRecentlyViewed(data.id)
         if (data.subjects?.[0]) setSelectedSubject(data.subjects[0].id)
         const clsList: ClassInfo[] = clsData.classes || []
         setClasses(clsList)

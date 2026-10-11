@@ -99,5 +99,5 @@ export async function PATCH(req: Request) {
     data,
   })
 
-  return NextResponse.json({ ok: true, user: { id: updated.id, name: updated.name, role: updated.role } })
+  return NextResponse.json({ ok: true, user: { id: updated.id, name: updated.name, role: updated.role, city: updated.city, district: updated.district } })
 }
