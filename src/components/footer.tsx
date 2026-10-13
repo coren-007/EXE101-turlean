@@ -1,6 +1,7 @@
 'use client'
 
-import { GraduationCap, Heart, Mail, Phone } from 'lucide-react'
+import { GraduationCap, Heart, Mail, Phone, ExternalLink } from 'lucide-react'
+import { FEEDBACK_FORM_URL } from '@/components/feedback-widget'
 
 export function Footer() {
   return (
@@ -34,6 +35,16 @@ export function Footer() {
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2"><Phone className="h-3.5 w-3.5" /> 1900 1234</li>
               <li className="flex items-center gap-2"><Mail className="h-3.5 w-3.5" /> hotro@giasu.vn</li>
+              <li>
+                <a
+                  href={FEEDBACK_FORM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 hover:text-foreground cursor-pointer transition-colors"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> Góp ý về sản phẩm
+                </a>
+              </li>
               <li className="hover:text-foreground cursor-pointer">Câu hỏi thường gặp</li>
               <li className="hover:text-foreground cursor-pointer">Điều khoản sử dụng</li>
             </ul>

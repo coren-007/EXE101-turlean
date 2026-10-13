@@ -6,6 +6,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
+import { FeedbackWidget } from "@/components/feedback-widget";
 import Script from "next/script";
 
 const googleAnalyticsId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || "G-F6RQ1Y5RLY";
@@ -46,6 +47,8 @@ export default function RootLayout({
         {children}
         <Toaster />
         <SonnerToaster position="top-center" richColors />
+        {/* Nút góp ý nổi — Google Form đánh giá sản phẩm, hiện trên mọi trang */}
+        <FeedbackWidget />
       </body>
     </html>
   );
