@@ -342,3 +342,21 @@
 
 /* Hide default leaflet zoom control (we use custom) */
 .leaflet-control-zoom { display: none !important; }
+
+/* Feedback widget — nút góp ý nổi (Google Form đánh giá sản phẩm) */
+.feedback-pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--primary);
+  animation: feedback-pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  pointer-events: none;
+}
+@keyframes feedback-pulse {
+  0% { transform: scale(1); opacity: 0.5; }
+  70% { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feedback-pulse { animation: none; }
+}

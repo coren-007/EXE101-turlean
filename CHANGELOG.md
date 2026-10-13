@@ -2,6 +2,23 @@
 
 Mọi thay đổi đáng chú ý của dự án GiaSuConnect (Turlean).
 
+## [1.2.1] — 2026-10-13
+
+Gắn Google Form đánh giá sản phẩm — thu phản hồi người dùng bản deploy.
+
+### Nổi bật
+
+- Nút góp ý nổi trên mọi trang, mở Google Form ở tab mới.
+- Desktop: hiện nhãn khi hover/focus; mobile: nút gọn “Góp ý”.
+- Có hiệu ứng pulse nhẹ và tôn trọng `prefers-reduced-motion`.
+- Thêm link “Góp ý về sản phẩm” ở footer.
+- Biểu mẫu: https://forms.gle/JcMrWenHp6exnzVH7
+
+### Chi tiết kỹ thuật
+
+- Component `src/components/feedback-widget.tsx` dùng chung URL cho widget và footer.
+- CSS animation `feedback-pulse`; widget dùng z-40 để nằm dưới dialog/sheet.
+
 ## [1.0.0] — 2026-09-29
 
 Release đầu tiên — hoàn thiện sản phẩm, sẵn sàng deploy production (Vercel + Supabase hoặc Docker + PostgreSQL).
