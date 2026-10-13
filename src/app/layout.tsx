@@ -6,6 +6,9 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
+import Script from "next/script";
+
+const googleAnalyticsId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || "G-F6RQ1Y5RLY";
 
 const vietnam = Be_Vietnam_Pro({
   variable: "--font-vietnam",
@@ -36,6 +39,10 @@ export default function RootLayout({
         className={`${vietnam.variable} font-sans antialiased bg-background text-foreground`}
         style={{ fontFamily: 'var(--font-vietnam), system-ui, sans-serif' }}
       >
+        <Script src={`https://www.googletagmanager.com/gtag/js?id=${googleAnalyticsId}`} strategy="afterInteractive" />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`window.dataLayer = window.dataLayer || []; function gtag(){window.dataLayer.push(arguments);} gtag("js", new Date()); gtag("config", "${googleAnalyticsId}");`}
+        </Script>
         {children}
         <Toaster />
         <SonnerToaster position="top-center" richColors />
