@@ -33,7 +33,7 @@ export function FeedbackWidget() {
       onFocus={() => setExpanded(true)}
       onBlur={() => setExpanded(false)}
       className={[
-        'fixed bottom-4 right-4 md:bottom-6 md:right-6 z-40',
+        'fixed bottom-4 right-4 md:bottom-6 md:right-6 z-40 isolate',
         'flex items-center gap-2 h-12 rounded-full',
         'bg-primary text-primary-foreground pl-3.5 pr-4',
         'shadow-e1 hover:shadow-lg hover:bg-primary/90 hover:-translate-y-0.5',
@@ -43,13 +43,13 @@ export function FeedbackWidget() {
       ].join(' ')}
     >
       {/* Vòng pulse thu hút sự chú ý (thuần trang trí, tôn trọng prefers-reduced-motion) */}
-      <span className="feedback-pulse" aria-hidden="true" />
-      <MessageSquareHeart className="h-5 w-5 shrink-0" />
+      <span className="feedback-pulse z-0" aria-hidden="true" />
+      <MessageSquareHeart className="relative z-10 h-5 w-5 shrink-0" />
       {/* Mobile: luôn hiện nhãn ngắn (không có hover) */}
-      <span className="flex items-center font-semibold text-sm md:hidden">Góp ý</span>
+      <span className="relative z-10 flex items-center font-semibold text-sm md:hidden">Góp ý</span>
       {/* Desktop: mở rộng nhãn đầy đủ khi hover/focus */}
       <span
-        className={`hidden md:flex items-center gap-1.5 overflow-hidden whitespace-nowrap font-semibold text-sm transition-all duration-300 ${
+        className={`relative z-10 hidden md:flex items-center gap-1.5 overflow-hidden whitespace-nowrap font-semibold text-sm transition-all duration-300 ${
           expanded ? 'max-w-[190px] opacity-100' : 'max-w-0 opacity-0'
         }`}
       >
