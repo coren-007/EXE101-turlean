@@ -24,7 +24,10 @@ import {
 import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
 import { TutorSubjectsPanel } from '@/components/dashboard/tutor-subjects-panel'
-import { TutorSchedulePanel } from '@/components/dashboard/tutor-schedule-panel'
+import { TutorScheduleCalendar } from '@/components/dashboard/schedule/tutor-schedule-calendar'
+import { TutorClassManager } from '@/components/dashboard/tutor-class-manager'
+import { StudentClassesPanel } from '@/components/dashboard/student-classes-panel'
+import { StudentScheduleCalendar } from '@/components/dashboard/schedule/student-schedule-calendar'
 
 interface Booking {
   id: string
@@ -120,26 +123,6 @@ const COMPLETENESS_LABELS: Record<string, string> = {
   hasLocation: 'Vị trí',
 }
 
-// ===== Helpers cho lịch tuần (Mục đích 1 — quản lý lớp học) =====
-const DAY_LABELS = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật']
-
-// Thứ Hai của tuần cách hiện tại `offset` tuần
-function weekStart(offset: number): Date {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  const dow = d.getDay() // 0 = Chủ nhật
-  const diffToMonday = dow === 0 ? -6 : 1 - dow
-  d.setDate(d.getDate() + diffToMonday + offset * 7)
-  return d
-}
-
-function dateKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 interface ClassGroup {
   key: string
   isSeries: boolean
@@ -165,9 +148,9 @@ interface ClassGroup {
 export function DashboardPage() {
   const { user, navigate, view } = useApp()
 
-  // Workspace tab cho gia sư: Tổng quan / Môn & giá / Lịch dạy
+  // Workspace tab cho gia sư: Tổng quan / Môn & giá / Lịch dạy / Lớp học
   // (tương thích view cũ manage-subjects / manage-availability)
-  const activeWsTab: 'overview' | 'subjects' | 'schedule' =
+  const activeWsTab: 'overview' | 'subjects' | 'schedule' | 'classes' =
     view.name === 'dashboard' && view.tab
       ? view.tab
       : view.name === 'manage-subjects'
@@ -181,8 +164,8 @@ export function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [completeness, setCompleteness] = useState<Completeness | null>(null)
   const [reliabilityData, setReliabilityData] = useState<ReliabilityData | null>(null)
-  // Mục đích 1 — lịch tuần: điều hướng giữa các tuần
-  const [weekOffset, setWeekOffset] = useState(0)
+  // Lớp học cố định (nhóm): đếm cho thẻ hành động nhanh + badge tab
+  const [classStats, setClassStats] = useState<{ open: number; pending: number } | null>(null)
 
   // P0-1: dialog hủy lịch kèm lý do
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null)
@@ -204,11 +187,23 @@ export function DashboardPage() {
         : Promise.resolve(null),
       // P0-1: điểm tin cậy & lịch sử vi phạm của chính mình
       fetch('/api/users/me/violations').then(r => r.json()).catch(() => null),
-    ]).then(([data, s, rel]) => {
+      // Lớp học cố định (nhóm) của gia sư — đếm lớp đang mở + đơn chờ duyệt
+      // + BUỔI HỌC lớp nhóm (hợp nhất lịch tuần)
+      user.role === 'TUTOR'
+        ? fetch('/api/classes/mine').then(r => r.json()).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([data, s, rel, clsMine]) => {
       setBookings(data.bookings || [])
       if (s?.stats) setStats(s.stats)
       if (s?.completeness) setCompleteness(s.completeness)
       if (rel?.reliability) setReliabilityData(rel)
+      if (clsMine?.classes) {
+        const open = clsMine.classes.filter((c: any) => c.status === 'OPEN').length
+        const pending = clsMine.classes.reduce(
+          (sum: number, c: any) => sum + c.enrollments.filter((e: any) => e.status === 'PENDING').length, 0,
+        )
+        setClassStats({ open, pending })
+      }
       setLoading(false)
     })
   }, [user])
@@ -558,83 +553,6 @@ export function DashboardPage() {
     )
   }
 
-  // ===== Mục đích 1 — Lịch tuần: xem nhanh mọi buổi trong tuần (điều hướng được) =====
-  const WeekSchedule = () => {
-    const start = weekStart(weekOffset)
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start)
-      d.setDate(d.getDate() + i)
-      return d
-    })
-    const todayKey = dateKey(new Date())
-    const cells = days.map(d => {
-      const key = dateKey(d)
-      const sessions = bookings.filter(b =>
-        b.date === key &&
-        (b.status === 'PENDING' || b.status === 'CONFIRMED' || b.status === 'COMPLETED'),
-      )
-      return { d, key, sessions }
-    })
-    return (
-      <Card className="p-4 mb-6">
-        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-          <h3 className="font-semibold text-sm flex items-center gap-2">
-            <CalendarCheck className="h-4 w-4 text-primary" /> Lịch tuần
-          </h3>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset(w => w - 1)} aria-label="Tuần trước">
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={weekOffset === 0 ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setWeekOffset(0)}
-            >
-              Tuần này
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset(w => w + 1)} aria-label="Tuần sau">
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-7 gap-1.5">
-          {cells.map(({ d, key, sessions }) => (
-            <div
-              key={key}
-              className={`rounded-lg border p-1.5 min-h-[70px] ${key === todayKey ? 'border-primary bg-primary/5' : ''}`}
-            >
-              <p className="text-[9px] font-medium text-muted-foreground uppercase leading-none">
-                {DAY_LABELS[(d.getDay() + 6) % 7]}
-              </p>
-              <p className={`text-sm font-bold ${key === todayKey ? 'text-primary' : ''}`}>{d.getDate()}</p>
-              <div className="mt-0.5 space-y-0.5">
-                {sessions.slice(0, 2).map(s => (
-                  <div
-                    key={s.id}
-                    className={`text-[9px] leading-tight px-1 py-0.5 rounded truncate ${
-                      s.status === 'COMPLETED'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : s.status === 'CONFIRMED'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-amber-100 text-amber-700'
-                    }`}
-                    title={`${s.startTime} ${s.subject.name} · ${s[otherParty as 'tutor' | 'student'].name}`}
-                  >
-                    {s.startTime} {s.subject.name}
-                  </div>
-                ))}
-                {sessions.length > 2 && (
-                  <p className="text-[9px] text-muted-foreground">+{sessions.length - 2} buổi</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-    )
-  }
-
   // ===== Mục đích 1 — Lớp học của tôi: nhóm buổi theo (đối tác × môn), có tiến độ =====
   const ClassGroups = () => {
     const map = new Map<string, Booking[]>()
@@ -864,12 +782,13 @@ export function DashboardPage() {
     </>
   )
 
-  // TUTOR DASHBOARD LAYOUT — workspace 3 tab: Tổng quan / Môn & giá / Lịch dạy
+  // TUTOR DASHBOARD LAYOUT — workspace 4 tab: Tổng quan / Môn & giá / Lịch dạy / Lớp học
   if (isTutor) {
-    const wsTabs: { id: 'overview' | 'subjects' | 'schedule'; label: string }[] = [
+    const wsTabs: { id: 'overview' | 'subjects' | 'schedule' | 'classes'; label: string }[] = [
       { id: 'overview', label: 'Tổng quan' },
       { id: 'subjects', label: 'Môn & giá' },
       { id: 'schedule', label: 'Lịch dạy' },
+      { id: 'classes', label: 'Lớp học' },
     ]
     return (
       <div>
@@ -881,13 +800,18 @@ export function DashboardPage() {
                 <button
                   key={t.id}
                   onClick={() => navigate({ name: 'dashboard', tab: t.id === 'overview' ? undefined : t.id })}
-                  className={`px-4 h-9 rounded-full text-sm font-bold whitespace-nowrap transition-all ${
+                  className={`px-4 h-9 rounded-full text-sm font-bold whitespace-nowrap transition-all relative ${
                     activeWsTab === t.id
                       ? 'bg-foreground text-background shadow-e1'
                       : 'text-muted-foreground hover:text-foreground bg-muted/60'
                   }`}
                 >
                   {t.label}
+                  {t.id === 'classes' && classStats && classStats.pending > 0 && (
+                    <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                      {classStats.pending}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -999,7 +923,7 @@ export function DashboardPage() {
         </div>
 
         {/* Quick actions */}
-        <div className="grid sm:grid-cols-3 gap-3 mb-6">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
           <Card
             className="p-4 cursor-pointer hover:shadow-md transition-all hover:border-primary/30 group"
             onClick={() => navigate({ name: 'dashboard', tab: 'subjects' })}
@@ -1029,7 +953,29 @@ export function DashboardPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-sm">Lịch dạy</p>
-                  <p className="text-xs text-muted-foreground">{stats?.availabilityCount || 0} khung giờ/tuần</p>
+                  <p className="text-xs text-muted-foreground">Lịch tuần/tháng · điểm danh · dời buổi</p>
+                </div>
+              </div>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+            </div>
+          </Card>
+
+          <Card
+            className="p-4 cursor-pointer hover:shadow-md transition-all hover:border-primary/30 group"
+            onClick={() => navigate({ name: 'dashboard', tab: 'classes' })}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <GraduationCap className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">Lớp học</p>
+                  <p className="text-xs text-muted-foreground">
+                    {classStats
+                      ? `${classStats.open} lớp cố định đang mở${classStats.pending > 0 ? ` · ${classStats.pending} đơn chờ` : ''} · quản lý buổi 1-1`
+                      : 'Lớp cố định nhóm + buổi 1-1 theo giờ trống'}
+                  </p>
                 </div>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
@@ -1058,8 +1004,7 @@ export function DashboardPage() {
         {/* P0-1: độ tin cậy của gia sư */}
         <ReliabilitySection />
 
-        {/* Mục đích 1 — lịch tuần + lớp học đang dạy */}
-        <WeekSchedule />
+        {/* Mục đích 1 — lớp 1-1 đang dạy (theo nhóm gia sư × môn) */}
         <ClassGroups />
 
         {/* Bookings tabs */}
@@ -1134,7 +1079,8 @@ export function DashboardPage() {
         </>)}
 
         {activeWsTab === 'subjects' && <TutorSubjectsPanel />}
-        {activeWsTab === 'schedule' && <TutorSchedulePanel />}
+        {activeWsTab === 'schedule' && <TutorScheduleCalendar />}
+        {activeWsTab === 'classes' && <TutorClassManager />}
 
         <DashboardDialogs />
       </div>
@@ -1237,8 +1183,11 @@ export function DashboardPage() {
       {/* P0-1: độ tin cậy của học sinh/phụ huynh */}
       <ReliabilitySection />
 
-      {/* Mục đích 1 — lịch tuần + lớp học đang theo học */}
-      <WeekSchedule />
+      {/* Lớp học cố định (nhóm) đã đăng ký — hiện khi có ít nhất 1 đăng ký */}
+      <StudentClassesPanel />
+
+      {/* Mục đích 1 — lịch học dạng calendar tương tác (tuần/tháng, bấm xem chi tiết) */}
+      <StudentScheduleCalendar />
       <ClassGroups />
 
       {/* Tabs */}

@@ -6,6 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { TutorCard, Tutor } from '@/components/tutor-card'
+import { SearchSuggest, pushRecentSearch, SuggestSubject } from '@/components/search-suggest'
+import { getRecentlyViewed, clearRecentlyViewed } from '@/lib/recently-viewed'
+import { History } from 'lucide-react'
 import {
   Search, MapPin, Home, School, Star, ShieldCheck,
   Calculator, Atom, FlaskConical, MessageCircle, GraduationCap,
@@ -30,11 +33,12 @@ const QUICK_CATEGORIES = [
 
 const CITIES = ['Tất cả', 'Hà Nội', 'TP.HCM', 'Đà Nẵng', 'Hải Phòng', 'Cần Thơ']
 
-function CarouselRow({ children, title, subtitle, onSeeAll }: {
+function CarouselRow({ children, title, subtitle, onSeeAll, action }: {
   children: React.ReactNode
   title: string
   subtitle?: string
   onSeeAll?: () => void
+  action?: React.ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [canLeft, setCanLeft] = useState(false)
@@ -65,6 +69,7 @@ function CarouselRow({ children, title, subtitle, onSeeAll }: {
           {subtitle && <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>}
         </div>
         <div className="flex items-center gap-2">
+          {action}
           {onSeeAll && (
             <Button variant="ghost" size="sm" className="font-semibold rounded-full" onClick={onSeeAll}>
               Xem tất cả <ArrowRight className="h-4 w-4 ml-0.5" />
@@ -96,6 +101,28 @@ export function HomePage() {
   // Thống kê thật từ API
   const [liveStats, setLiveStats] = useState<{ tutorCount: number; avgRating: number; reviewCount: number } | null>(null)
 
+  // P5: "Xem gần đây" — hồ sơ gia sư user vừa mở (localStorage, theo thứ tự mới nhất)
+  const [recentTutors, setRecentTutors] = useState<Tutor[]>([])
+  useEffect(() => {
+    const ids = getRecentlyViewed()
+    if (ids.length === 0) return
+    fetch(`/api/tutors?ids=${ids.join(',')}`)
+      .then(r => r.ok ? r.json() : { tutors: [] })
+      .then(data => setRecentTutors((data.tutors || []).slice(0, 8)))
+      .catch(() => {})
+  }, [])
+
+  // P5: cá nhân hóa — "Gia sư tại {city}" cho học sinh/phụ huynh đã đăng nhập
+  const [nearbyTutors, setNearbyTutors] = useState<Tutor[]>([])
+  const userCity = user?.role === 'STUDENT' ? user.city : null
+  useEffect(() => {
+    if (!userCity) return
+    fetch(`/api/tutors?city=${encodeURIComponent(userCity)}&sort=rating&pageSize=10`)
+      .then(r => r.ok ? r.json() : { tutors: [] })
+      .then(data => setNearbyTutors(data.tutors || []))
+      .catch(() => {})
+  }, [userCity])
+
   useEffect(() => {
     fetch('/api/tutors?sort=rating&pageSize=50')
       .then(r => r.json())
@@ -116,11 +143,22 @@ export function HomePage() {
       .catch(() => setLoading(false))
   }, [])
 
-  const handleSearch = () => {
+  const handleSearch = (term?: string) => {
+    const q = term !== undefined ? term : searchQ
+    pushRecentSearch(q)
     navigate({
       name: 'search',
-      subject: searchQ || undefined,
-      ...(city !== 'Tất cả' ? { district: city } : {}),
+      q: q || undefined,
+      ...(city !== 'Tất cả' ? { city } : {}),
+    })
+  }
+
+  // Chọn môn từ gợi ý autocomplete → sang trang tìm kiếm lọc theo môn
+  const handlePickSubject = (s: SuggestSubject) => {
+    navigate({
+      name: 'search',
+      subject: s.slug,
+      ...(city !== 'Tất cả' ? { city } : {}),
     })
   }
 
@@ -155,16 +193,16 @@ export function HomePage() {
               Chọn buổi, đặt lịch và bắt đầu học — chỉ trong vài phút.
             </p>
 
-            {/* Search pill — kiểu Airbnb */}
+            {/* Search pill — kiểu Airbnb, kèm autocomplete gợi ý môn + gia sư */}
             <div className="search-pill max-w-2xl mx-auto flex-col md:flex-row">
-              <div className="flex items-center gap-2 flex-1 px-5 py-3 md:py-0 md:px-4 md:border-0 border-b md:border-b-0">
-                <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-                <Input
-                  placeholder="Môn học, tên gia sư... (vd: Toán, IELTS, Piano)"
+              <div className="flex items-center gap-2 flex-1 w-full px-5 py-3 md:py-0 md:px-4 md:border-0 border-b md:border-b-0">
+                <SearchSuggest
+                  className="flex-1 min-w-0"
+                  autoFocus={false}
                   value={searchQ}
-                  onChange={(e) => setSearchQ(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="border-0 shadow-none focus-visible:ring-0 px-0 h-9 text-sm font-medium placeholder:font-normal"
+                  onChange={setSearchQ}
+                  onSubmit={(term) => handleSearch(term)}
+                  onPickSubject={handlePickSubject}
                 />
               </div>
               <div className="pill-sep hidden md:block" />
@@ -180,7 +218,7 @@ export function HomePage() {
                 </select>
               </div>
               <button
-                onClick={handleSearch}
+                onClick={() => handleSearch()}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-sm px-7 py-3 md:py-0 md:my-2 md:mr-2 rounded-full transition-colors flex items-center gap-2 justify-center"
               >
                 <Search className="h-4 w-4" /> Tìm kiếm
@@ -225,6 +263,47 @@ export function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* ============ CAROUSEL: XEM GẦN ĐÂY (cá nhân hóa) ============ */}
+      {recentTutors.length > 0 && (
+        <CarouselRow
+          title="Tiếp tục nơi bạn dừng lại"
+          subtitle="Những hồ sơ gia sư bạn vừa xem"
+          onSeeAll={() => navigate({ name: 'favorites' })}
+          action={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="font-semibold rounded-full text-muted-foreground"
+              title="Xóa danh sách đã xem"
+              onClick={() => { clearRecentlyViewed(); setRecentTutors([]) }}
+            >
+              <History className="h-4 w-4" /> Xóa lịch sử
+            </Button>
+          }
+        >
+          {recentTutors.map(t => (
+            <div key={t.id} className="w-[270px] sm:w-[290px]">
+              <TutorCard tutor={t} compact />
+            </div>
+          ))}
+        </CarouselRow>
+      )}
+
+      {/* ============ CAROUSEL: GIA SƯ TẠI THÀNH PHỐ CỦA BẠN (cá nhân hóa) ============ */}
+      {userCity && nearbyTutors.length > 0 && (
+        <CarouselRow
+          title={`Gia sư tại ${userCity}`}
+          subtitle="Gợi ý theo khu vực của bạn — đánh giá cao nhất trước"
+          onSeeAll={() => navigate({ name: 'search', city: userCity || undefined })}
+        >
+          {nearbyTutors.map(t => (
+            <div key={t.id} className="w-[270px] sm:w-[290px]">
+              <TutorCard tutor={t} compact />
+            </div>
+          ))}
+        </CarouselRow>
+      )}
 
       {/* ============ CAROUSEL: GIA SƯ NỔI BẬT ============ */}
       <CarouselRow

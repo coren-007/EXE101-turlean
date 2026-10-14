@@ -1,7 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useApp } from '@/lib/store'
+import { useFavorites } from '@/lib/favorites'
+import { pushRecentlyViewed } from '@/lib/recently-viewed'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -15,12 +17,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from '@/components/ui/dialog'
 import { RatingStars } from '@/components/rating-stars'
+import { Progress } from '@/components/ui/progress'
 import {
   MapPin, Home, School, Star, BadgeCheck, Clock, Briefcase, GraduationCap,
   Phone, Calendar, ArrowLeft, Share2, Heart, MessageSquare, Navigation,
-  CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2
+  CheckCircle2, X, Info, Wallet, AlertCircle, ShieldCheck, Video, Repeat2, Lock,
+  Users, PencilLine, CalendarClock, Hourglass, AlertTriangle
 } from 'lucide-react'
-import { formatVnd, formatDate, timeAgo } from '@/lib/format'
+import { formatVnd, formatDate, timeAgo, formatClassSchedule, sortClassSlots } from '@/lib/format'
 import { toast } from 'sonner'
 
 interface TutorDetail {
@@ -58,6 +62,9 @@ interface TutorDetail {
     startTime: string
     endTime: string
   }[]
+  // Lịch bận theo NGÀY CỤ THỂ (booking PENDING/CONFIRMED tương lai)
+  // → dialog đặt lịch vô hiệu hóa đúng giờ đã có người đặt
+  busySlots?: { date: string; startTime: string; endTime: string }[]
   avgRating: number
   reviewCount: number
   // P0-1: điểm tin cậy công khai
@@ -79,6 +86,32 @@ interface TutorDetail {
 }
 
 const DAY_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
+
+// Lớp học cố định (nhóm) gia sư mở tại nhà mình — hiển thị trên hồ sơ công khai
+interface ClassInfo {
+  id: string
+  tutorId: string
+  title: string
+  subject: { id: string; name: string; slug?: string; icon?: string | null }
+  gradeLevel?: string | null
+  description?: string | null
+  meetingType: string // AT_TUTOR_HOME | ONLINE
+  address?: string | null
+  capacity: number
+  monthlyFee?: number | null
+  status: string // OPEN | PAUSED
+  startDate?: string | null
+  enrollDeadline?: string | null
+  deadlinePassed?: boolean
+  schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
+  enrolledCount: number
+  pendingCount: number
+  waitlistCount?: number
+  nextSession?: { date: string; startTime: string; endTime: string } | null
+  upcomingCount?: number
+  myEnrollment?: { id: string; status: string } | null
+  myWaitlistPosition?: number | null
+}
 
 // Generate time slots from tutor's availability (15-min increments)
 function generateSlotsFromAvailability(
@@ -112,7 +145,7 @@ function generateSlotsFromAvailability(
 }
 
 function isDateAvailable(
-  availabilities: { dayOfWeek: number; startTime: string; endTime: string }[],
+  availabilities: { dayOfWeek: number }[],
   dateStr: string
 ): boolean {
   if (!dateStr) return false
@@ -132,10 +165,20 @@ function addWeeksLocal(dateStr: string, weeks: number): string {
 }
 
 export function TutorProfilePage({ id }: { id: string }) {
-  const { navigate, user } = useApp()
+  const { navigate, user, view } = useApp()
   const [tutor, setTutor] = useState<TutorDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [bookingOpen, setBookingOpen] = useState(false)
+  // Lớp học cố định (nhóm) của gia sư — hiện trên hồ sơ cho phụ huynh xem & đăng ký
+  const [classes, setClasses] = useState<ClassInfo[]>([])
+  const [enrollTarget, setEnrollTarget] = useState<ClassInfo | null>(null)
+  const [enrollStudentName, setEnrollStudentName] = useState('')
+  const [enrollNote, setEnrollNote] = useState('')
+  const [submittingEnroll, setSubmittingEnroll] = useState(false)
+  // Cảnh báo trùng lịch trả về từ API (409) — hiện trong dialog, cho phép đăng ký tiếp (force)
+  const [enrollConflicts, setEnrollConflicts] = useState<string[]>([])
+  // Tự mở dialog đăng ký khi vào từ tab "Lớp học" của trang tìm kiếm (view.classId)
+  const autoOpenedClassId = useRef<string | null>(null)
 
   // Booking form state
   const [selectedSubject, setSelectedSubject] = useState<string>('')
@@ -148,28 +191,14 @@ export function TutorProfilePage({ id }: { id: string }) {
   const [submitting, setSubmitting] = useState(false)
   // Mục đích 1 — lớp học định kỳ: 1 = buổi lẻ, >= 2 = khóa lặp mỗi tuần cùng khung giờ
   const [repeatWeeks, setRepeatWeeks] = useState(1)
-  const [isFavorite, setIsFavorite] = useState(false) // P1: favorite qua localStorage
 
-  // P1: favorite từ localStorage
+  // P4: favorite đồng bộ tài khoản (DB) — guest fallback localStorage, tự merge khi login
+  const { isFavorite: checkFavorite, toggle: toggleFavoriteFn, load: loadFavorites } = useFavorites()
+  const isFavorite = checkFavorite(id)
+  const toggleFavorite = () => { void toggleFavoriteFn(id, tutor?.name) }
   useEffect(() => {
-    try {
-      const favs = JSON.parse(localStorage.getItem('favorite_tutors') ?? '[]')
-      setIsFavorite(favs.includes(id))
-    } catch { /* ignore */ }
-  }, [id])
-
-  // P1: nút yêu thích — lưu vào localStorage
-  const toggleFavorite = () => {
-    try {
-      const favs = JSON.parse(localStorage.getItem('favorite_tutors') ?? '[]')
-      const next = favs.includes(id) ? favs.filter((f: string) => f !== id) : [...favs, id]
-      localStorage.setItem('favorite_tutors', JSON.stringify(next))
-      setIsFavorite(next.includes(id))
-      toast.success(next.includes(id) ? 'Đã lưu vào danh sách yêu thích' : 'Đã bỏ khỏi danh sách yêu thích')
-    } catch {
-      toast.error('Không thể lưu danh sách yêu thích')
-    }
-  }
+    void loadFavorites(user ? { id: user.id } : null)
+  }, [user, loadFavorites])
 
   // P1: chia sẻ hồ sơ — native share trên mobile, copy link trên desktop
   const handleShare = async () => {
@@ -196,15 +225,111 @@ export function TutorProfilePage({ id }: { id: string }) {
   useEffect(() => {
      
     setLoading(true)
-    fetch(`/api/tutors/${id}`)
-      .then(r => r.json())
-      .then(data => {
+    autoOpenedClassId.current = null
+    Promise.all([
+      fetch(`/api/tutors/${id}`).then(r => r.json()),
+      fetch(`/api/classes?tutorId=${id}`).then(r => r.json()).catch(() => ({ classes: [] })),
+    ])
+      .then(([data, clsData]) => {
         setTutor(data)
+        // P5: ghi nhận "đã xem gần đây" (chỉ hồ sơ gia sư hợp lệ)
+        if (data?.id) pushRecentlyViewed(data.id)
         if (data.subjects?.[0]) setSelectedSubject(data.subjects[0].id)
+        const clsList: ClassInfo[] = clsData.classes || []
+        setClasses(clsList)
         setLoading(false)
+        // Đến từ tìm kiếm lớp học → tự mở dialog đăng ký đúng lớp đó
+        const targetId = view.name === 'tutor' ? view.classId : undefined
+        if (targetId && user?.role === 'STUDENT' && autoOpenedClassId.current !== targetId) {
+          const target = clsList.find(c => c.id === targetId)
+          if (target) {
+            autoOpenedClassId.current = targetId
+            // Trì hoãn 1 tick để toast/navigation ổn định
+            setTimeout(() => openEnrollDialog(target), 150)
+          }
+        }
       })
       .catch(() => setLoading(false))
-  }, [id])
+  }, [id, view.name === 'tutor' ? view.classId : undefined])
+
+  // Làm mới danh sách lớp (sau khi đăng ký / rút đăng ký đổi trạng thái)
+  const reloadClasses = () => {
+    fetch(`/api/classes?tutorId=${id}`)
+      .then(r => r.json())
+      .then(d => setClasses(d.classes || []))
+      .catch(() => {})
+  }
+
+  // ===== Đăng ký vào lớp học cố định =====
+  const openEnrollDialog = (cls: ClassInfo) => {
+    if (!user) {
+      toast.info('Vui lòng đăng nhập để đăng ký lớp học')
+      navigate({ name: 'login' })
+      return
+    }
+    if (user.role === 'TUTOR') {
+      toast.error('Gia sư không thể đăng ký lớp của gia sư khác')
+      return
+    }
+    setEnrollStudentName('')
+    setEnrollNote('')
+    setEnrollConflicts([])
+    setEnrollTarget(cls)
+  }
+
+  const handleEnroll = async (force = false) => {
+    if (!enrollTarget) return
+    setSubmittingEnroll(true)
+    try {
+      const res = await fetch(`/api/classes/${enrollTarget.id}/enroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentName: enrollStudentName.trim() || undefined,
+          note: enrollNote.trim() || undefined,
+          force,
+        }),
+      })
+      const data = await res.json()
+      // 409 = trùng lịch với lớp/1-1 đang có → hiện danh sách để phụ huynh quyết định
+      if (res.status === 409 && Array.isArray(data.conflicts)) {
+        setEnrollConflicts(data.conflicts)
+        toast.info('Lịch lớp này đang trùng lịch học đã có của bạn — xem trong dialog để quyết định')
+        return
+      }
+      if (!res.ok) throw new Error(data.error || 'Đăng ký thất bại')
+      toast.success(data.message || 'Đã gửi đăng ký lớp học', { duration: 5000 })
+      setEnrollTarget(null)
+      setEnrollConflicts([])
+      reloadClasses()
+    } catch (e: any) {
+      toast.error(e.message || 'Đăng ký thất bại')
+    } finally {
+      setSubmittingEnroll(false)
+    }
+  }
+
+  // Rút đăng ký / rời lớp ngay từ hồ sơ
+  const handleCancelEnrollment = async (cls: ClassInfo) => {
+    if (!cls.myEnrollment) return
+    try {
+      const res = await fetch(`/api/classes/${cls.id}/enrollments/${cls.myEnrollment.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CANCELLED' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Thao tác thất bại')
+      toast.success(
+        cls.myEnrollment.status === 'APPROVED'
+          ? `Đã rời lớp "${cls.title}" — gia sư sẽ được thông báo`
+          : `Đã rút đăng ký khỏi lớp "${cls.title}"`,
+      )
+      reloadClasses()
+    } catch (e: any) {
+      toast.error(e.message || 'Thao tác thất bại')
+    }
+  }
 
   const handleOpenBooking = () => {
     if (!user) {
@@ -333,7 +458,36 @@ export function TutorProfilePage({ id }: { id: string }) {
   const today = new Date().toISOString().split('T')[0]
 
   // Compute available slots from tutor's availability for selected date
+  // (chỉ từ slot FREE — lịch cố định không sinh lựa chọn)
   const availableSlots = tutor ? generateSlotsFromAvailability(tutor.availabilities, bookingDate) : []
+
+  // ===== Lịch bận theo ngày cụ thể (booking đã có trên nền tảng) =====
+  // Vô hiệu hóa đúng giờ đã có người đặt — phụ huynh nhìn thấy ngay,
+  // không phải chờ server từ chối lúc gửi.
+  const busySlotsOfDate = (tutor.busySlots || []).filter(b => b.date === bookingDate)
+  const toMin = (t: string) => {
+    const [h, m] = t.split(':').map(Number)
+    return h * 60 + m
+  }
+  const isSlotBusy = (t: string) => {
+    const start = toMin(t)
+    const end = start + duration * 60 // cả buổi học phải không trùng lớp đã có
+    return busySlotsOfDate.some(b => start < toMin(b.endTime) && end > toMin(b.startTime))
+  }
+  // ===== Lớp học cố định (nhóm) rơi vào ngày đang chọn — chặn đặt 1-1 trùng giờ lớp =====
+  const classSlotsOfDate = bookingDate
+    ? classes
+        .filter(c => c.status === 'OPEN' || c.status === 'PAUSED')
+        .flatMap(c => c.schedule
+          .filter(s => s.dayOfWeek === new Date(bookingDate).getDay())
+          .map(s => ({ title: c.title, startTime: s.startTime, endTime: s.endTime })))
+    : []
+  const isSlotClassBusy = (t: string) => {
+    const start = toMin(t)
+    const end = start + duration * 60
+    return classSlotsOfDate.some(b => start < toMin(b.endTime) && end > toMin(b.startTime))
+  }
+  const busyCount = availableSlots.filter(t => isSlotBusy(t) || isSlotClassBusy(t)).length
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-6">
@@ -509,6 +663,227 @@ export function TutorProfilePage({ id }: { id: string }) {
             </div>
           </Card>
 
+          {/* Lớp học cố định (nhóm) — gia sư mở lớp tại nhà mình theo lịch tuần.
+              Phụ huynh/học sinh thấy: lịch cố định, địa điểm, học phí, SĨ SỐ còn trống
+              và đăng ký trực tiếp; gia sư duyệt từng học sinh. */}
+          {classes.length > 0 && (
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                <h2 className="font-semibold text-lg flex items-center gap-2">
+                  <GraduationCap className="h-5 w-5 text-primary" /> Lớp học cố định
+                </h2>
+                <Badge variant="outline" className="text-[10px] rounded-full">
+                  {classes.length} lớp
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                Các lớp học nhóm gia sư mở tại nhà mình — lịch học cố định hằng tuần, sĩ số giới hạn.
+              </p>
+              <div className="space-y-4">
+                {classes.map(cls => {
+                  const enrolled = cls.enrolledCount
+                  const remaining = cls.capacity - enrolled
+                  const full = enrolled >= cls.capacity
+                  const pct = Math.min(100, Math.round((enrolled / cls.capacity) * 100))
+                  const isPaused = cls.status === 'PAUSED'
+                  const deadlinePassed = !!cls.deadlinePassed ||
+                    !!(cls.enrollDeadline && cls.enrollDeadline < new Date().toISOString().slice(0, 10))
+                  const isMine = user && tutor.id === user.id
+                  const my = cls.myEnrollment ?? null
+                  return (
+                    <div key={cls.id} className="rounded-2xl border p-4 sm:p-5">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-bold text-base">{cls.title}</h3>
+                            {cls.status === 'OPEN' && (
+                              <Badge className="bg-emerald-100 text-emerald-700 border-0 text-[10px] gap-1">
+                                <CheckCircle2 className="h-3 w-3" /> Đang tuyển học sinh
+                              </Badge>
+                            )}
+                            {isPaused && (
+                              <Badge className="bg-amber-100 text-amber-700 border-0 text-[10px] gap-1">
+                                <Clock className="h-3 w-3" /> Tạm dừng tuyển
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {cls.subject.name}
+                            {cls.gradeLevel ? ` · ${cls.gradeLevel}` : ''} ·{' '}
+                            {cls.meetingType === 'ONLINE' ? 'Học trực tuyến' : 'Học tại nhà gia sư'}
+                          </p>
+                          {cls.nextSession && (
+                            <p className="text-xs text-primary font-medium mt-1.5 flex items-center gap-1.5">
+                              <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                              Buổi tới: {formatDate(cls.nextSession.date)} · {cls.nextSession.startTime}–{cls.nextSession.endTime}
+                              <span className="text-muted-foreground font-normal">
+                                (lịch đã có sẵn {(cls.upcomingCount ?? 0)} buổi tới)
+                              </span>
+                            </p>
+                          )}
+                        </div>
+                        {cls.monthlyFee != null && (
+                          <div className="text-right shrink-0">
+                            <p className="font-bold text-primary">{formatVnd(cls.monthlyFee)}</p>
+                            <p className="text-[10px] text-muted-foreground">/tháng</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Lịch học cố định hằng tuần */}
+                      <div className="flex flex-wrap gap-1.5 mt-3 items-center">
+                        {sortClassSlots(cls.schedule).map((s, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 text-xs font-semibold"
+                          >
+                            <Clock className="h-3 w-3" />
+                            {DAY_NAMES[s.dayOfWeek]} {s.startTime}–{s.endTime}
+                          </span>
+                        ))}
+                        {cls.startDate && (
+                          <span className="text-[11px] text-muted-foreground">
+                            · Khai giảng {formatDate(cls.startDate)}
+                          </span>
+                        )}
+                        {cls.enrollDeadline && cls.status === 'OPEN' && (
+                          <span
+                            className={`text-[11px] inline-flex items-center gap-1 font-medium ${
+                              deadlinePassed ? 'text-rose-600' : 'text-sky-600'
+                            }`}
+                          >
+                            <CalendarClock className="h-3 w-3" />
+                            {deadlinePassed
+                              ? `Đã hết hạn đăng ký (${formatDate(cls.enrollDeadline)})`
+                              : `Hạn đăng ký: ${formatDate(cls.enrollDeadline)}`}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Địa điểm + mô tả */}
+                      <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
+                        {cls.meetingType !== 'ONLINE' && cls.address && (
+                          <p className="flex items-start gap-1.5">
+                            <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <span className="line-clamp-1">{cls.address}</span>
+                          </p>
+                        )}
+                        {cls.description && (
+                          <p className="line-clamp-2 leading-relaxed">{cls.description}</p>
+                        )}
+                      </div>
+
+                      {/* Sĩ số lớp — thông tin mấu chốt để phụ huynh cân nhắc */}
+                      <div className="mt-4">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="font-semibold flex items-center gap-1.5">
+                            <Users className="h-3.5 w-3.5 text-primary" /> Sĩ số lớp
+                          </span>
+                          <span className={full ? 'text-rose-600 font-semibold' : 'text-muted-foreground'}>
+                            {enrolled}/{cls.capacity} học sinh
+                            {!full ? ` · còn ${remaining} chỗ` : (cls.waitlistCount ?? 0) > 0 ? ` · ${cls.waitlistCount} đang chờ chỗ` : ' · đã đủ'}
+                          </span>
+                        </div>
+                        <Progress value={pct} className="h-2" />
+                        {cls.pendingCount > 0 && !full && (
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            +{cls.pendingCount} đăng ký đang chờ gia sư duyệt
+                          </p>
+                        )}
+                        {full && (cls.waitlistCount ?? 0) > 0 && (
+                          <p className="text-[10px] text-violet-600 mt-1 flex items-center gap-1">
+                            <Hourglass className="h-3 w-3" />
+                            Đăng ký mới vào danh sách chờ — tự động vào lớp khi có chỗ trống
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Hành động theo vai trò người xem */}
+                      <div className="mt-4 flex items-center gap-2 flex-wrap">
+                        {isMine ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => navigate({ name: 'dashboard', tab: 'classes' })}
+                          >
+                            <PencilLine className="h-3.5 w-3.5 mr-1" /> Quản lý lớp của bạn
+                          </Button>
+                        ) : my ? (
+                          <>
+                            {my.status === 'PENDING' && (
+                              <Badge className="bg-amber-100 text-amber-700 border-0 gap-1">
+                                <Clock className="h-3 w-3" /> Đã gửi đăng ký — chờ gia sư duyệt
+                              </Badge>
+                            )}
+                            {my.status === 'APPROVED' && (
+                              <Badge className="bg-emerald-100 text-emerald-700 border-0 gap-1">
+                                <CheckCircle2 className="h-3 w-3" /> Bạn đã ở trong lớp này
+                              </Badge>
+                            )}
+                            {my.status === 'WAITLIST' && (
+                              <Badge className="bg-violet-100 text-violet-700 border-0 gap-1">
+                                <Hourglass className="h-3 w-3" />
+                                Đang chờ chỗ — vị trí #{cls.myWaitlistPosition ?? '?'}
+                              </Badge>
+                            )}
+                            {my.status === 'REJECTED' && (
+                              <Badge className="bg-rose-100 text-rose-700 border-0 gap-1">
+                                <X className="h-3 w-3" /> Đăng ký chưa được nhận
+                              </Badge>
+                            )}
+                            {(my.status === 'PENDING' || my.status === 'APPROVED' || my.status === 'WAITLIST') && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => handleCancelEnrollment(cls)}
+                              >
+                                {my.status === 'APPROVED' ? 'Rời lớp' : my.status === 'WAITLIST' ? 'Rút khỏi chờ' : 'Rút đăng ký'}
+                              </Button>
+                            )}
+                            {(my.status === 'REJECTED' || my.status === 'CANCELLED') &&
+                              cls.status === 'OPEN' && !deadlinePassed && (
+                              <Button size="sm" variant="outline" onClick={() => openEnrollDialog(cls)}>
+                                Đăng ký lại
+                              </Button>
+                            )}
+                            {(my.status === 'REJECTED' || my.status === 'CANCELLED') && deadlinePassed && (
+                              <Badge className="bg-rose-100 text-rose-700 border-0 gap-1 text-[10px]">
+                                <CalendarClock className="h-3 w-3" /> Đã hết hạn đăng ký
+                              </Badge>
+                            )}
+                          </>
+                        ) : !user ? (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              toast.info('Vui lòng đăng nhập để đăng ký lớp học')
+                              navigate({ name: 'login' })
+                            }}
+                          >
+                            Đăng ký lớp học
+                          </Button>
+                        ) : user.role === 'TUTOR' ? null : (
+                          <Button
+                            size="sm"
+                            disabled={isPaused || deadlinePassed}
+                            onClick={() => openEnrollDialog(cls)}
+                          >
+                            {isPaused
+                              ? 'Tạm dừng tuyển sinh'
+                              : deadlinePassed
+                                ? 'Đã hết hạn đăng ký'
+                                : full ? 'Vào danh sách chờ' : 'Đăng ký lớp học'}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
+
           {/* Education & Experience */}
           <Card className="p-6">
             <h2 className="font-semibold text-lg mb-3">Học vấn & Kinh nghiệm</h2>
@@ -549,28 +924,56 @@ export function TutorProfilePage({ id }: { id: string }) {
             </div>
           </Card>
 
-          {/* Availability */}
+          {/* Lịch dạy hàng tuần — hiển thị ĐẦY ĐỦ mọi khung giờ mỗi ngày */}
           <Card className="p-6">
-            <h2 className="font-semibold text-lg mb-3">Lịch trống</h2>
-            <div className="grid grid-cols-7 gap-1.5">
-              {DAY_NAMES.map((day, idx) => {
-                const slots = tutor.availabilities.filter(a => a.dayOfWeek === idx)
+            <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+              <h2 className="font-semibold text-lg">Lịch dạy hàng tuần</h2>
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-primary inline-block" /> Nhận lớp mới
+                </span>
+              </div>
+            </div>
+            {/* Thứ 2 → Chủ nhật, mỗi ngày liệt kê TẤT CẢ khung giờ (fix: trước đây
+                chỉ hiện khung đầu tiên trong ngày) */}
+            <div className="space-y-1">
+              {[1, 2, 3, 4, 5, 6, 0].map(idx => {
+                const daySlots = tutor.availabilities
+                  .filter(a => a.dayOfWeek === idx)
+                  .sort((a, b) => a.startTime.localeCompare(b.startTime))
                 return (
-                  <div key={day} className={`rounded-lg p-2 text-center ${slots.length > 0 ? 'bg-primary/5 border border-primary/20' : 'bg-muted/30 border border-transparent'}`}>
-                    <p className={`text-[10px] font-semibold ${slots.length > 0 ? 'text-primary' : 'text-muted-foreground'}`}>
-                      {day === 'Chủ nhật' ? 'CN' : day.replace('Thứ ', 'T')}
-                    </p>
-                    {slots.length > 0 ? (
-                      <p className="text-[9px] text-muted-foreground mt-0.5">{slots[0].startTime}</p>
-                    ) : (
-                      <p className="text-[9px] text-muted-foreground/50 mt-0.5">—</p>
-                    )}
+                  <div
+                    key={idx}
+                    className={`grid grid-cols-[76px_1fr] items-center gap-3 py-2 border-b last:border-b-0 ${
+                      daySlots.length > 0 ? '' : 'opacity-50'
+                    }`}
+                  >
+                    <span className={`text-sm font-semibold ${idx === new Date().getDay() ? 'text-primary' : ''}`}>
+                      {idx === 0 ? 'Chủ nhật' : `Thứ ${idx + 1}`}
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {daySlots.length > 0 ? daySlots.map(s => (
+                        <span
+                          key={s.id}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20"
+                          title="Khung giờ trống — có thể đặt lịch"
+                        >
+                          {s.startTime}–{s.endTime}
+                        </span>
+                      )) : (
+                        <span className="text-xs text-muted-foreground">Không có lịch</span>
+                      )}
+                    </div>
                   </div>
                 )
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              * Lịch có thể thay đổi, vui lòng đặt lịch để gia sư xác nhận.
+              * Có thể đặt lịch 1-1 trong các khung giờ trên.
+              {classes.length > 0 && (
+                <> Muốn học nhóm theo lịch cố định? Xem <span className="font-medium text-primary">Lớp học cố định</span> phía trên.</>
+              )}
+              Lịch có thể thay đổi, vui lòng đặt lịch để gia sư xác nhận.
             </p>
           </Card>
 
@@ -834,24 +1237,45 @@ export function TutorProfilePage({ id }: { id: string }) {
                 <>
                   {availableSlots.length > 0 ? (
                     <div className="grid grid-cols-4 gap-2">
-                      {availableSlots.map(t => (
-                        <button
-                          key={t}
-                          onClick={() => setBookingTime(t)}
-                          className={`py-2 rounded-lg text-sm font-medium border transition-colors ${
-                            bookingTime === t
-                              ? 'bg-primary text-primary-foreground border-primary'
-                              : 'border-border hover:border-primary/30'
-                          }`}
-                        >
-                          {t}
-                        </button>
-                      ))}
+                      {availableSlots.map(t => {
+                        const busy = isSlotBusy(t) || isSlotClassBusy(t)
+                        return (
+                          <button
+                            key={t}
+                            onClick={() => !busy && setBookingTime(t)}
+                            disabled={busy}
+                            className={`py-2 rounded-lg text-sm font-medium border transition-colors relative ${
+                              busy
+                                ? 'bg-muted/50 border-border text-muted-foreground/60 line-through cursor-not-allowed'
+                                : bookingTime === t
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'border-border hover:border-primary/30'
+                            }`}
+                            title={busy ? 'Khung giờ này đã có lớp — chọn giờ khác' : `Buổi học ${t} + ${duration}h`}
+                          >
+                            {t}
+                          </button>
+                        )
+                      })}
                     </div>
                   ) : (
                     <div className="rounded-lg border-2 border-dashed p-4 text-center text-xs text-muted-foreground">
                       Gia sư không có lịch trống ngày này. Chọn ngày khác.
                     </div>
+                  )}
+                  {busyCount > 0 && (
+                    <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1">
+                      <Lock className="h-3 w-3" />
+                      {busyCount} khung giờ đã có lớp — đã vô hiệu hóa, vui lòng chọn giờ còn lại.
+                    </p>
+                  )}
+                  {classSlotsOfDate.length > 0 && availableSlots.length > 0 && (
+                    <p className="text-[11px] text-amber-600/90 mt-1.5 flex items-center gap-1">
+                      <GraduationCap className="h-3 w-3 shrink-0" />
+                      <span className="line-clamp-2">
+                        Lớp học cố định trong ngày: {classSlotsOfDate.map(b => `${b.title} (${b.startTime}–${b.endTime})`).join('; ')}. Muốn học lớp này? Xem mục "Lớp học cố định" phía trên.
+                      </span>
+                    </p>
                   )}
                 </>
               )}
@@ -982,6 +1406,115 @@ export function TutorProfilePage({ id }: { id: string }) {
             <Button variant="outline" onClick={() => setBookingOpen(false)}>Hủy</Button>
             <Button onClick={handleSubmitBooking} disabled={submitting}>
               {submitting ? 'Đang gửi...' : 'Xác nhận đặt lịch'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog đăng ký vào lớp học cố định (nhóm) */}
+      <Dialog open={!!enrollTarget} onOpenChange={(open) => !open && setEnrollTarget(null)}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto scroll-area">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GraduationCap className="h-5 w-5 text-primary" /> Đăng ký lớp học
+            </DialogTitle>
+            <DialogDescription>
+              {enrollTarget && (
+                <>
+                  <b className="text-foreground">{enrollTarget.title}</b>
+                  {' '}— {enrollTarget.subject.name}
+                  {enrollTarget.gradeLevel ? ` · ${enrollTarget.gradeLevel}` : ''}
+                  <br />
+                  Lịch cố định: {formatClassSchedule(enrollTarget.schedule)}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            {enrollTarget?.meetingType !== 'ONLINE' && enrollTarget?.address && (
+              <p className="text-xs text-muted-foreground flex items-start gap-1.5 rounded-xl bg-muted/50 p-3">
+                <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>Địa điểm học: <b className="text-foreground">{enrollTarget.address}</b></span>
+              </p>
+            )}
+
+            <div>
+              <Label className="text-sm font-semibold mb-1.5 block">Tên học sinh</Label>
+              <Input
+                placeholder={user?.name ?? 'Tên học sinh'}
+                value={enrollStudentName}
+                onChange={(e) => setEnrollStudentName(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Đặt trống = dùng tên tài khoản của bạn. Phụ huynh có thể điền tên con mình.
+              </p>
+            </div>
+
+            <div>
+              <Label className="text-sm font-semibold mb-1.5 block">Lời nhắn tới gia sư (tùy chọn)</Label>
+              <Textarea
+                placeholder="Trình độ hiện tại, mục tiêu, mong muốn của con..."
+                value={enrollNote}
+                onChange={(e) => setEnrollNote(e.target.value)}
+                rows={3}
+              />
+            </div>
+
+            <div className="rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
+              {enrollTarget?.enrollDeadline && (
+                <p className="text-sky-700 font-medium flex items-center gap-1.5">
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  Hạn chót đăng ký: <b>{formatDate(enrollTarget.enrollDeadline)}</b>
+                </p>
+              )}
+              <p>
+                Sĩ số hiện tại:{' '}
+                <b className="text-foreground">
+                  {enrollTarget?.enrolledCount}/{enrollTarget?.capacity} học sinh
+                </b>
+                {enrollTarget && enrollTarget.capacity - enrollTarget.enrolledCount > 0 && (
+                  <> · còn <b className="text-foreground">{enrollTarget.capacity - enrollTarget.enrolledCount}</b> chỗ</>
+                )}
+              </p>
+              {enrollTarget?.monthlyFee != null && (
+                <p>
+                  Học phí: <b className="text-foreground">{formatVnd(enrollTarget.monthlyFee)}/tháng</b> — thanh toán trực tiếp cho gia sư.
+                </p>
+              )}
+              <p>Gia sư sẽ duyệt đăng ký và gửi kết quả qua Tin nhắn.</p>
+            </div>
+
+            {/* Cảnh báo trùng lịch với lớp/1-1 đang có của phụ huynh */}
+            {enrollConflicts.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-1.5">
+                <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5" /> Lịch lớp này đang trùng lịch học đã có của bạn:
+                </p>
+                <ul className="space-y-1">
+                  {enrollConflicts.map((c, i) => (
+                    <li key={i} className="text-xs text-amber-800 flex items-start gap-1.5">
+                      <span className="mt-1 h-1 w-1 rounded-full bg-amber-500 shrink-0" />
+                      <span>{c}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[11px] text-amber-700">
+                  Bạn vẫn có thể đăng ký nếu chấp nhận trùng lịch (ví dụ học sinh khác nhau học các lớp khác nhau).
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEnrollTarget(null)}>Đóng</Button>
+            {enrollConflicts.length > 0 && (
+              <Button variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-50" onClick={() => handleEnroll(true)} disabled={submittingEnroll}>
+                {submittingEnroll ? 'Đang gửi...' : 'Vẫn đăng ký'}
+              </Button>
+            )}
+            <Button onClick={() => handleEnroll(false)} disabled={submittingEnroll}>
+              {submittingEnroll ? 'Đang gửi...' : enrollConflicts.length > 0 ? 'Xem lại lịch rồi gửi' : 'Gửi đăng ký'}
             </Button>
           </DialogFooter>
         </DialogContent>

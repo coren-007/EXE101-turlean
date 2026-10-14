@@ -8,9 +8,9 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  // Supabase: DATABASE_URL = pooled (pgbouncer, port 6543) cho app runtime
-  //           DIRECT_URL    = direct  (port 5432) cho prisma db push / migrate
   directUrl = env("DIRECT_URL")
+  // Production: PostgreSQL (Supabase / Neon / Vercel Postgres)
+  // DIRECT_URL cần thiết cho Prisma Migrate khi dùng pooled DATABASE_URL
 }
 
 model User {
@@ -51,6 +51,46 @@ model User {
   conversationsAsTutor   Conversation[] @relation("TutorConversations")
   conversationsAsStudent Conversation[] @relation("StudentConversations")
   messagesSent    Message[]    @relation("MessageSender")
+  // Lớp học cố định (nhóm) gia sư mở tại nhà mình — phụ huynh/học sinh đăng ký vào lớp
+  groupClasses      GroupClass[]     @relation("GroupClassTutor")
+  classEnrollments  ClassEnrollment[] @relation("ClassEnrollmentStudent")
+  classAttendance   ClassAttendance[] @relation("ClassAttendanceStudent")
+  feePayments       ClassFeePayment[] @relation("ClassFeePaymentStudent")
+  // Gia sư yêu thích (wishlist) — đã lưu bởi user này
+  favoritesGiven    Favorite[]       @relation("FavoriteOwner")
+  favoriteTutors    Favorite[]       @relation("FavoriteTutor")
+
+  // P5: index cho truy vấn tìm kiếm (where role=TUTOR + city + hourlyRate range)
+  @@index([role, city])
+  @@index([hourlyRate])
+}
+
+// ===== Gia sư yêu thích (wishlist) =====
+// User lưu gia sư quan tâm — đồng bộ theo tài khoản (không mất khi đổi máy).
+// Guest chưa đăng nhập thì fallback localStorage phía client, tự merge lên DB khi login.
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  tutorId   String
+  createdAt DateTime @default(now())
+
+  owner User @relation("FavoriteOwner", fields: [userId], references: [id], onDelete: Cascade)
+  tutor User @relation("FavoriteTutor", fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tutorId])
+  @@index([userId])
+}
+
+// ===== Ngày nghỉ lễ toàn hệ thống =====
+// Sinh buổi học (ClassSession) sẽ BỎ QUA các ngày này; khi thêm ngày lễ mới,
+// các buổi tương lai trúng ngày tự động bị hủy (kèm thông báo cho học sinh).
+model Holiday {
+  id        String   @id @default(cuid())
+  date      String   // YYYY-MM-DD
+  name      String   // vd "Tết Nguyên Đán", "Quốc khánh"
+  createdAt DateTime @default(now())
+
+  @@unique([date])
 }
 
 model Subject {
@@ -62,6 +102,7 @@ model Subject {
   level     String? // PRIMARY | SECONDARY | HIGH | ALL
   tutors    TutorSubject[]
   bookings  Booking[]
+  classes   GroupClass[]
 }
 
 model TutorSubject {
@@ -141,6 +182,9 @@ model Availability {
   startTime  String  // HH:MM
   endTime    String  // HH:MM
   tutor      User    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  // P5: index cho lọc tìm kiếm theo khung giờ (where tutorId + dayOfWeek)
+  @@index([tutorId, dayOfWeek])
 }
 
 // Mục đích 2 — kết nối 2 bên: hội thoại 1-1 giữa gia sư và phụ huynh/học sinh.
@@ -176,10 +220,147 @@ model Message {
   @@index([conversationId, createdAt])
 }
 
+// ===== Lớp học cố định (nhóm) =====
+// Gia sư mở lớp học tại nhà mình theo lịch cố định hằng tuần (vd Lớp Toán 10:
+// thứ 3 & thứ 5, 18:00–20:30). Phụ huynh/học sinh xem lịch + sức chứa trên hồ
+// sơ gia sư và đăng ký vào lớp; gia sư duyệt từng học sinh.
+model GroupClass {
+  id           String   @id @default(cuid())
+  tutorId      String
+  subjectId    String
+  title        String   // vd "Lớp Toán 10 — Nâng cao"
+  gradeLevel   String?  // vd "Lớp 10", "Cấp 3", "Tiểu học"
+  description  String?
+  // AT_TUTOR_HOME = học tại nhà gia sư (mặc định) | ONLINE = học trực tuyến
+  meetingType  String   @default("AT_TUTOR_HOME")
+  address      String?  // địa điểm học (mặc định lấy địa chỉ nhà gia sư)
+  capacity     Int      @default(8) // sĩ số tối đa của lớp
+  monthlyFee   Int?     // học phí theo tháng (đồng)
+  // OPEN = đang tuyển học sinh | PAUSED = tạm dừng tuyển | CLOSED = đã đóng lớp
+  status       String   @default("OPEN")
+  startDate    String?  // YYYY-MM-DD — ngày khai giảng
+  // YYYY-MM-DD — HẠN CHÓT đăng ký (null = tuyển đến khi đủ sĩ số / đóng lớp).
+  // Quá hạn thì phụ huynh không đăng ký được nữa (API chặn + UI khoá nút).
+  enrollDeadline String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tutor        User                @relation("GroupClassTutor", fields: [tutorId], references: [id], onDelete: Cascade)
+  subject      Subject             @relation(fields: [subjectId], references: [id])
+  schedule     ClassScheduleSlot[]
+  enrollments  ClassEnrollment[]
+  sessions     ClassSession[]
+  feePayments  ClassFeePayment[]
+
+  @@index([tutorId])
+}
+
+// Một buổi học cố định trong tuần của lớp: (thứ, giờ bắt đầu, giờ kết thúc)
+model ClassScheduleSlot {
+  id        String @id @default(cuid())
+  classId   String
+  dayOfWeek Int    // 0=Chủ nhật ... 6=Thứ 7 (đồng nhất Availability)
+  startTime String // HH:MM
+  endTime   String // HH:MM
+  class     GroupClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([classId])
+}
+
+// Một phụ huynh/học sinh đăng ký vào lớp — gia sư duyệt (APPROVED) hoặc từ chối
+model ClassEnrollment {
+  id              String   @id @default(cuid())
+  classId         String
+  studentParentId String
+  studentName     String?  // tên học sinh (phụ huynh đăng ký hộ con)
+  note            String?
+  // PENDING = chờ gia sư duyệt | APPROVED = đã vào lớp
+  // REJECTED = bị từ chối | CANCELLED = phụ huynh/học sinh rút lại
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  class           GroupClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  studentParent   User       @relation("ClassEnrollmentStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+  feePayments     ClassFeePayment[]
+
+  @@unique([classId, studentParentId])
+  @@index([classId])
+  @@index([studentParentId])
+}
+
 model Session {
   id         String   @id @default(cuid())
   token      String   @unique
   userId     String
   expiresAt  DateTime
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ===== Buổi học cụ thể của lớp nhóm (Mục đích 1 — hoàn thiện quản lý lớp) =====
+// Sinh tự động từ ClassScheduleSlot theo từng tuần (rolling 12 tuần, tự gia hạn
+// khi gần hết). Mỗi buổi là một thực thể riêng → có thể ĐIỂM DANH (ClassAttendance),
+// DỜI BUỔI (dạy bù) hoặc NGHỦ BUỔI (hủy 1 buổi) mà không đè cả lịch tuần.
+model ClassSession {
+  id        String   @id @default(cuid())
+  classId   String
+  date      String   // YYYY-MM-DD
+  startTime String   // HH:MM
+  endTime   String   // HH:MM
+  // SCHEDULED = chưa diễn ra | COMPLETED = đã điểm danh/hoàn thành | CANCELLED = nghỉ buổi
+  status    String   @default("SCHEDULED")
+  note      String?  // lý do nghỉ buổi / ghi chú dời buổi
+  // Buổi DẠY BÙ: id của buổi gốc đã nghỉ mà buổi này thay thế (null = buổi chính lịch)
+  makeupForId String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class      GroupClass       @relation(fields: [classId], references: [id], onDelete: Cascade)
+  attendance ClassAttendance[]
+  makeupFor  ClassSession?   @relation("MakeupSession", fields: [makeupForId], references: [id], onDelete: SetNull)
+  makeups    ClassSession[]  @relation("MakeupSession")
+
+  @@index([classId, date])
+  @@unique([classId, date, startTime])
+}
+
+// Điểm danh 1 học sinh trong 1 buổi học lớp nhóm (PRE/ABSENT/LATE)
+model ClassAttendance {
+  id              String   @id @default(cuid())
+  sessionId       String
+  studentParentId String
+  // PRESENT = có mặt | LATE = đi muộn | ABSENT = vắng mặt
+  status          String
+  markedAt        DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  session       ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  studentParent User         @relation("ClassAttendanceStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, studentParentId])
+  @@index([studentParentId])
+}
+
+// ===== Sổ học phí lớp nhóm =====
+// Gia sư ghi nhận từng lần phụ huynh ĐÓNG học phí theo tháng (1 dòng / học sinh / tháng).
+// amount = số tiền thực thu (đồng) — cho phép khác monthlyFee (miễn giảm/thiếu/thêm).
+model ClassFeePayment {
+  id              String   @id @default(cuid())
+  classId         String
+  enrollmentId    String
+  studentParentId String
+  period          String   // YYYY-MM — tháng học phí
+  amount          Int      // số tiền đã thu (đồng)
+  method          String   @default("CASH") // CASH | BANK | MOMO | OTHER
+  note            String?
+  paidAt          DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  class         GroupClass      @relation(fields: [classId], references: [id], onDelete: Cascade)
+  enrollment    ClassEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  studentParent User            @relation("ClassFeePaymentStudent", fields: [studentParentId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, enrollmentId, period])
+  @@index([classId])
+  @@index([studentParentId])
 }

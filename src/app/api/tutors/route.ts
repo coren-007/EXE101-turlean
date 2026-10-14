@@ -3,10 +3,14 @@
 // P1: phân trang (page/pageSize) + trả total
 // P1: kèm reliability score cho mỗi gia sư (bulk, tránh N+1)
 // P1: tutor chưa có review không bị dồn xuống đáy (điểm khởi đầu 4.5 tạm)
+// P5: ids=a,b,c — lấy đúng bộ gia sư theo thứ tự (cho "Xem gần đây" / gợi ý)
+// P5: availDay + availSlot — lọc gia sư rảnh theo khung giờ dạy trong tuần
+// P5: verified=true — chỉ gia sư đã xác minh
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { computeReliabilityBulk } from '@/lib/reliability'
+import { normalizeVi, normalizeTutorHaystack } from '@/lib/text'
 
 // SQLite: contains đã case-insensitive; PostgreSQL: cần mode insensitive
 const IS_POSTGRES = (process.env.DATABASE_URL ?? '').startsWith('postgres')
@@ -15,8 +19,115 @@ function ci(field: string, q: string): Prisma.StringFilter {
   return IS_POSTGRES ? { contains: q, mode: 'insensitive' } as Prisma.StringFilter : { contains: q } as Prisma.StringFilter
 }
 
+// P5: khung giờ trong ngày — so sánh chuỗi "HH:MM" hoạt động đúng theo thứ tự từ điển
+const DAY_SLOTS: Record<string, [string, string]> = {
+  morning: ['05:00', '11:00'],
+  afternoon: ['11:00', '17:00'],
+  evening: ['17:00', '22:30'],
+}
+
+// P5: chuyển dòng User DB (kèm tutorSubjects + reviews) → DTO trả về client
+function toTutorDto(t: {
+  id: string
+  name: string
+  avatar: string | null
+  bio: string | null
+  profession: string | null
+  district: string | null
+  city: string | null
+  address: string | null
+  lat: number | null
+  lng: number | null
+  hourlyRate: number | null
+  experienceYears: number | null
+  isVerified: boolean
+  teachesAtStudentHome: boolean
+  teachesAtOwnPlace: boolean
+  teachesOnline: boolean
+  travelRadiusKm: number | null
+  createdAt: Date
+  tutorSubjects: { subject: { id: string; name: string; slug: string; category: string; icon: string | null; level: string | null }; pricePerHour: number }[]
+  reviewsReceived: { rating: number }[]
+}) {
+  const reviews = t.reviewsReceived
+  const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0
+  const tutorMinPrice = t.hourlyRate || (t.tutorSubjects[0]?.pricePerHour ?? 0)
+  return {
+    id: t.id,
+    name: t.name,
+    avatar: t.avatar,
+    bio: t.bio,
+    profession: t.profession,
+    district: t.district,
+    city: t.city,
+    address: t.address,
+    lat: t.lat,
+    lng: t.lng,
+    hourlyRate: t.hourlyRate,
+    minPrice: tutorMinPrice,
+    experienceYears: t.experienceYears,
+    isVerified: t.isVerified,
+    teachesAtStudentHome: t.teachesAtStudentHome,
+    teachesAtOwnPlace: t.teachesAtOwnPlace,
+    teachesOnline: t.teachesOnline,
+    travelRadiusKm: t.travelRadiusKm,
+    subjects: t.tutorSubjects.map(ts => ({
+      id: ts.subject.id,
+      name: ts.subject.name,
+      slug: ts.subject.slug,
+      category: ts.subject.category,
+      icon: ts.subject.icon,
+      level: ts.subject.level,
+      pricePerHour: ts.pricePerHour,
+    })),
+    avgRating: Math.round(avgRating * 10) / 10,
+    reviewCount: reviews.length,
+    createdAt: t.createdAt,
+  }
+}
+
+async function withReliabilityList(tutors: any[]) {
+  const reliabilityMap = await computeReliabilityBulk(tutors.map(t => t.id))
+  return tutors.map(t => {
+    const rel = reliabilityMap.get(t.id)
+    return {
+      ...t,
+      reliability: rel
+        ? { score: rel.score, tier: rel.tier.key, tierLabel: rel.tier.label, violations: rel.violations }
+        : { score: 100, tier: 'EXCELLENT', tierLabel: 'Xuất sắc', violations: 0 },
+    }
+  })
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
+
+  // ===== P5: chế độ lấy theo ids — dùng cho "Xem gần đây" / gợi ý cá nhân hóa =====
+  // Giữ đúng thứ tự ids truyền vào (mới xem nhất lên trước), bỏ qua filter/phân trang.
+  const idsParam = searchParams.get('ids')
+  if (idsParam !== null) {
+    const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean).slice(0, 24)
+    if (ids.length === 0) {
+      return NextResponse.json({ tutors: [], total: 0, page: 1, pageSize: 0, totalPages: 1 })
+    }
+    const rows = await db.user.findMany({
+      where: { id: { in: ids }, role: 'TUTOR' },
+      include: {
+        tutorSubjects: { include: { subject: true } },
+        reviewsReceived: { select: { rating: true } },
+      },
+    })
+    const byId = new Map(rows.map(r => [r.id, r]))
+    const ordered = ids.map(id => byId.get(id)).filter((t): t is (typeof rows)[number] => t !== undefined)
+    return NextResponse.json({
+      tutors: await withReliabilityList(ordered.map(toTutorDto)),
+      total: ordered.length,
+      page: 1,
+      pageSize: ordered.length,
+      totalPages: 1,
+    })
+  }
+
   const subject = searchParams.get('subject') // slug
   const category = searchParams.get('category')
   const q = searchParams.get('q') // text search
@@ -34,6 +145,19 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, Number(searchParams.get('page') ?? 1) || 1)
   const pageSize = Math.min(50, Math.max(1, Number(searchParams.get('pageSize') ?? 20) || 20))
 
+  // P5: lọc khung giờ dạy — availDay (0=CN..6=T7) + availSlot (morning|afternoon|evening)
+  // Hai tham số độc lập: chỉ ngày → cả ngày đó; chỉ khung → mọi ngày có khung đó; cả hai → giao nhau.
+  const availDayParam = searchParams.get('availDay')
+  const availDay = availDayParam !== null && availDayParam !== '' && !Number.isNaN(Number(availDayParam))
+    ? Math.trunc(Number(availDayParam))
+    : null
+  const availSlot = searchParams.get('availSlot')
+  const validSlot = availSlot && DAY_SLOTS[availSlot] ? availSlot : null
+  const needAvail = availDay !== null || !!validSlot
+
+  // P5: chỉ lấy gia sư đã xác minh
+  const verifiedOnly = searchParams.get('verified') === 'true'
+
   // Build subject filter (only when filtering by subject/category/level)
   const subjectFilter: any = {}
   if (subject) subjectFilter.slug = subject
@@ -42,24 +166,18 @@ export async function GET(req: NextRequest) {
 
   const where: Prisma.UserWhereInput = {
     role: 'TUTOR',
-    hourlyRate: { gt: 0 },
+    // P4: lọc giá đẩy xuống DB (minPrice hiển thị = hourlyRate vì đã yêu cầu > 0)
+    hourlyRate: {
+      gt: 0,
+      ...(minPrice ? { gte: Number(minPrice) } : {}),
+      ...(maxPrice ? { lte: Number(maxPrice) } : {}),
+    },
     tutorSubjects: { some: { subject: subjectFilter } },
   }
 
   // Text search (q): theo tên gia sư, nghề nghiệp, bio, tên môn học — không phân biệt hoa thường
-  if (q) {
-    where.AND = [
-      {
-        OR: [
-          { name: ci('name', q) },
-          { profession: ci('profession', q) },
-          { bio: ci('bio', q) },
-          { tutorSubjects: { some: { subject: { name: ci('name', q) } } } },
-        ],
-      },
-    ]
-  }
-
+  // (SQL contains). Nếu q KHÔNG dấu tiếng Việt ("toan") thì SQL không khớp "Toán" →
+  // fallback JS normalize bên dưới.
   if (district) where.district = district
   if (city) where.city = city
 
@@ -72,52 +190,70 @@ export async function GET(req: NextRequest) {
     where.teachesOnline = true
   }
 
-  const tutors = await db.user.findMany({
-    where,
+  // P5: lọc availability xuống DB theo ngày trong tuần
+  if (availDay !== null) {
+    where.availabilities = { some: { dayOfWeek: availDay } }
+  }
+  // P5: chỉ gia sư đã xác minh
+  if (verifiedOnly) where.isVerified = true
+
+  // whereWithQ = where + điều kiện text search (build SAU khi where đã đủ district/city/mode)
+  const whereWithQ: Prisma.UserWhereInput = { ...where }
+  if (q) {
+    whereWithQ.AND = [
+      {
+        OR: [
+          { name: ci('name', q) },
+          { profession: ci('profession', q) },
+          { bio: ci('bio', q) },
+          { tutorSubjects: { some: { subject: { name: ci('name', q) } } } },
+        ],
+      },
+    ]
+  }
+
+  let tutors = await db.user.findMany({
+    where: whereWithQ,
     include: {
       tutorSubjects: { include: { subject: true } },
       reviewsReceived: { select: { rating: true } },
+      // P5: cần dòng availability khi lọc khung giờ (check chồng lấn giờ phía JS)
+      ...(needAvail ? { availabilities: true } : {}),
     },
   })
 
-  // Compute rating and price
-  let result = tutors.map(t => {
-    const reviews = t.reviewsReceived
-    const avgRating = reviews.length ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0
-    const tutorMinPrice = t.hourlyRate || (t.tutorSubjects[0]?.pricePerHour ?? 0)
-    return {
-      id: t.id,
-      name: t.name,
-      avatar: t.avatar,
-      bio: t.bio,
-      profession: t.profession,
-      district: t.district,
-      city: t.city,
-      address: t.address,
-      lat: t.lat,
-      lng: t.lng,
-      hourlyRate: t.hourlyRate,
-      minPrice: tutorMinPrice,
-      experienceYears: t.experienceYears,
-      isVerified: t.isVerified,
-      teachesAtStudentHome: t.teachesAtStudentHome,
-      teachesAtOwnPlace: t.teachesAtOwnPlace,
-      teachesOnline: t.teachesOnline,
-      travelRadiusKm: t.travelRadiusKm,
-      subjects: t.tutorSubjects.map(ts => ({
-        id: ts.subject.id,
-        name: ts.subject.name,
-        slug: ts.subject.slug,
-        category: ts.subject.category,
-        icon: ts.subject.icon,
-        level: ts.subject.level,
-        pricePerHour: ts.pricePerHour,
-      })),
-      avgRating: Math.round(avgRating * 10) / 10,
-      reviewCount: reviews.length,
-      createdAt: t.createdAt,
+  // P4: fallback q không dấu tiếng Việt — SQL contains không khớp "toan" ↔ "Toán",
+  // nên khi SQL ra 0 kết quả, thử lọc JS sau khi normalize bỏ dấu (như autocomplete)
+  if (q && tutors.length === 0) {
+    const norm = normalizeVi(q)
+    if (norm) {
+      const all = await db.user.findMany({
+        where,
+        include: {
+          tutorSubjects: { include: { subject: true } },
+          reviewsReceived: { select: { rating: true } },
+          ...(needAvail ? { availabilities: true } : {}),
+        },
+      })
+      tutors = all.filter(t => normalizeTutorHaystack(t).includes(norm))
     }
-  })
+  }
+
+  // P5: lọc khung giờ trong ngày (JS — so chuỗi HH:MM theo thứ tự từ điển)
+  if (needAvail) {
+    tutors = tutors.filter(t => {
+      const rows = (t as any).availabilities || []
+      const rowsForDay = availDay !== null ? rows.filter((a: any) => a.dayOfWeek === availDay) : rows
+      if (rowsForDay.length === 0) return false
+      if (!validSlot) return true
+      const [slotStart, slotEnd] = DAY_SLOTS[validSlot]
+      // Khung rảnh giao khung giờ yêu cầu: start < slotEnd && end > slotStart
+      return rowsForDay.some((a: any) => a.startTime < slotEnd && a.endTime > slotStart)
+    })
+  }
+
+  // Compute rating and price
+  let result = tutors.map(toTutorDto)
 
   // Apply price filter (after compute minPrice)
   if (minPrice) result = result.filter(t => t.minPrice >= Number(minPrice))
@@ -171,19 +307,8 @@ export async function GET(req: NextRequest) {
   const paged = sortResult.slice((page - 1) * pageSize, page * pageSize)
 
   // P1: reliability bulk cho các tutor trong trang hiện tại
-  const reliabilityMap = await computeReliabilityBulk(paged.map(t => t.id))
-  const withReliability = paged.map(t => {
-    const rel = reliabilityMap.get(t.id)
-    return {
-      ...t,
-      reliability: rel
-        ? { score: rel.score, tier: rel.tier.key, tierLabel: rel.tier.label, violations: rel.violations }
-        : { score: 100, tier: 'EXCELLENT', tierLabel: 'Xuất sắc', violations: 0 },
-    }
-  })
-
   return NextResponse.json({
-    tutors: withReliability,
+    tutors: await withReliabilityList(paged),
     total,
     page,
     pageSize,

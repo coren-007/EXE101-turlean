@@ -541,20 +541,33 @@ async function main() {
       })
     }
 
-    // Add availability (Mon-Sun)
-    for (let day = 1; day <= 6; day++) {
-      await db.availability.create({
-        data: {
-          tutorId: tutor.id,
-          dayOfWeek: day,
-          startTime: '18:00',
-          endTime: '21:00'
-        }
-      })
+    // P5: Add availability — đa dạng theo mẫu (idx % 5) để lọc khung giờ có ý nghĩa:
+    // 0: tối T2-T7 + CN cả ngày (người đi làm) · 1: cuối tuần + tối T6 (sinh viên)
+    // 2: sáng T2-T6 (giảng viên nghỉ hưu) · 3: chiều tối mọi ngày (chiều tối) · 4: linh hoạt T2/T4/T7/CN
+    const availPattern = idx % 5
+    const rows: { dayOfWeek: number; startTime: string; endTime: string }[] = []
+    if (availPattern === 0) {
+      for (let day = 1; day <= 6; day++) rows.push({ dayOfWeek: day, startTime: '18:00', endTime: '21:00' })
+      rows.push({ dayOfWeek: 0, startTime: '08:00', endTime: '20:00' })
+    } else if (availPattern === 1) {
+      rows.push({ dayOfWeek: 5, startTime: '18:00', endTime: '21:00' })
+      for (const day of [6, 0]) {
+        rows.push({ dayOfWeek: day, startTime: '08:00', endTime: '11:30' })
+        rows.push({ dayOfWeek: day, startTime: '13:30', endTime: '18:00' })
+      }
+    } else if (availPattern === 2) {
+      for (let day = 1; day <= 5; day++) rows.push({ dayOfWeek: day, startTime: '07:00', endTime: '11:30' })
+    } else if (availPattern === 3) {
+      for (let day = 1; day <= 6; day++) rows.push({ dayOfWeek: day, startTime: '14:00', endTime: '20:00' })
+      rows.push({ dayOfWeek: 0, startTime: '14:00', endTime: '18:00' })
+    } else {
+      rows.push({ dayOfWeek: 1, startTime: '18:30', endTime: '21:30' })
+      rows.push({ dayOfWeek: 3, startTime: '18:30', endTime: '21:30' })
+      for (const day of [6, 0]) rows.push({ dayOfWeek: day, startTime: '07:30', endTime: '11:30' })
     }
-    await db.availability.create({
-      data: { tutorId: tutor.id, dayOfWeek: 0, startTime: '08:00', endTime: '20:00' }
-    })
+    for (const r of rows) {
+      await db.availability.create({ data: { tutorId: tutor.id, ...r } })
+    }
   }
   console.log(`✓ Created ${TUTORS.length} tutors across 5 cities`)
 

@@ -185,3 +185,368 @@ export async function notifyCancellation(params: {
     body,
   })
 }
+
+// ===== Lớp học cố định (nhóm) — thông báo đăng ký / duyệt học sinh =====
+
+/** Thông báo cho GIA SƯ khi phụ huynh/học sinh đăng ký vào lớp học cố định */
+export async function notifyTutorNewEnrollment(params: {
+  tutorId: string
+  studentParentId: string
+  parentName: string
+  studentName: string
+  classTitle: string
+  schedule: string // "T3 18:00–20:30 · T5 18:00–20:30"
+  enrolledCount: number // sĩ số đã duyệt hiện tại
+  capacity: number
+  note?: string | null
+}) {
+  const who =
+    params.studentName && params.studentName !== params.parentName
+      ? `học sinh ${params.studentName} (do ${params.parentName} đăng ký)`
+      : params.parentName
+  const lines = [
+    `[Đăng ký lớp học] ${who} đã gửi đăng ký vào lớp "${params.classTitle}".`,
+    `Lịch học cố định: ${params.schedule}. Lớp hiện có ${params.enrolledCount}/${params.capacity} học sinh.`,
+    'Vui lòng duyệt hoặc từ chối trong Bảng điều khiển — tab "Lớp học".',
+  ]
+  if (params.note) lines.push(`Lời nhắn: ${params.note}`)
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentParentId,
+    senderId: params.studentParentId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho PHỤ HUYNH/HỌC SINH khi được duyệt vào lớp */
+export async function notifyStudentEnrollmentApproved(params: {
+  tutorId: string
+  studentId: string
+  tutorName: string
+  studentName: string
+  classTitle: string
+  schedule: string
+  address?: string | null
+  monthlyFee?: number | null
+}) {
+  const lines = [
+    `[Đã vào lớp] Gia sư ${params.tutorName} đã duyệt ${params.studentName} vào lớp "${params.classTitle}".`,
+    `Lịch học cố định: ${params.schedule}.`,
+  ]
+  if (params.address) lines.push(`Địa điểm: ${params.address}.`)
+  if (params.monthlyFee) lines.push(`Học phí: ${vnd(params.monthlyFee)}/tháng — thanh toán trực tiếp cho gia sư.`)
+  lines.push('Chi tiết lớp học trong Bảng điều khiển của bạn.')
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho PHỤ HUYNH/HỌC SINH khi đăng ký lớp bị từ chối */
+export async function notifyStudentEnrollmentRejected(params: {
+  tutorId: string
+  studentId: string
+  tutorName: string
+  studentName: string
+  classTitle: string
+}) {
+  const body =
+    `[Từ chối đăng ký] Gia sư ${params.tutorName} chưa nhận ${params.studentName} vào lớp "${params.classTitle}".` +
+    ' Có thể lớp đã đủ sĩ số. Bạn vẫn có thể nhắn tin cho gia sư hoặc tìm lớp khác phù hợp.'
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body,
+  })
+}
+
+/** Thông báo cho GIA SƯ khi phụ huynh/học sinh rút đăng ký (hoặc rời lớp) */
+export async function notifyTutorEnrollmentCancelled(params: {
+  tutorId: string
+  studentId: string
+  parentName: string
+  studentName: string
+  classTitle: string
+  wasApproved: boolean // true = đã từng vào lớp rồi rời, false = rút đăng ký đang chờ duyệt
+}) {
+  const who =
+    params.studentName && params.studentName !== params.parentName
+      ? `học sinh ${params.studentName} (phụ huynh ${params.parentName})`
+      : params.parentName
+  const body =
+    `[${params.wasApproved ? 'Rời lớp' : 'Rút đăng ký'}] ${who} đã ${
+      params.wasApproved ? 'rời' : 'rút đăng ký khỏi'
+    } lớp "${params.classTitle}". Sĩ số lớp được cập nhật tự động.`
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.studentId,
+    body,
+  })
+}
+
+// ===== Lớp học cố định — waitlist, buổi học & thay đổi lịch =====
+
+/** Thông báo cho GIA SƯ khi có học sinh vào DANH SÁCH CHỜ (lớp đã đủ sĩ số) */
+export async function notifyTutorNewWaitlist(params: {
+  tutorId: string
+  studentParentId: string
+  parentName: string
+  studentName: string
+  classTitle: string
+  position: number
+  note?: string | null
+}) {
+  const who =
+    params.studentName && params.studentName !== params.parentName
+      ? `học sinh ${params.studentName} (do ${params.parentName} đăng ký)`
+      : params.parentName
+  const lines = [
+    `[Danh sách chờ] ${who} đã đăng ký vào danh sách chờ của lớp "${params.classTitle}" — vị trí #${params.position}.`,
+    'Lớp hiện đã đủ sĩ số. Khi có học sinh rời lớp hoặc bạn tăng sĩ số, hệ thống tự động chuyển học sinh chờ vào lớp.',
+  ]
+  if (params.note) lines.push(`Lời nhắn: ${params.note}`)
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentParentId,
+    senderId: params.studentParentId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho PHỤ HUYNH khi được TỰ ĐỘNG chuyển từ danh sách chờ vào lớp */
+export async function notifyStudentWaitlistPromoted(params: {
+  tutorId: string
+  studentId: string
+  tutorName: string
+  studentName: string
+  classTitle: string
+  schedule: string
+  address?: string | null
+  monthlyFee?: number | null
+}) {
+  const lines = [
+    `[Có chỗ trống!] Học sinh ${params.studentName} vừa được chuyển TỰ ĐỘNG từ danh sách chờ vào lớp "${params.classTitle}" (gia sư ${params.tutorName}).`,
+    `Lịch học cố định: ${params.schedule}.`,
+  ]
+  if (params.address) lines.push(`Địa điểm: ${params.address}.`)
+  if (params.monthlyFee) lines.push(`Học phí: ${vnd(params.monthlyFee)}/tháng — thanh toán trực tiếp cho gia sư.`)
+  lines.push('Chi tiết buổi học trong Bảng điều khiển của bạn.')
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body: lines.join('\n'),
+  })
+}
+
+/** Thông báo cho TOÀN BỘ học sinh trong lớp khi GIA SƯ ĐỔI LỊCH TUẦN của lớp */
+export async function notifyStudentsScheduleChanged(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  newSchedule: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Đổi lịch lớp] Gia sư ${params.tutorName} đã thay đổi lịch học tuần của lớp "${params.classTitle}".\n` +
+      `Lịch mới: ${params.newSchedule}.\n` +
+      'Các buổi đã hoàn thành giữ nguyên — chỉ buổi chưa diễn ra được cập nhật theo lịch mới.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh trong lớp khi 1 BUỔI được dời (dạy bù) */
+export async function notifyStudentsSessionRescheduled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  oldDate: string
+  oldTime: string
+  newDate: string
+  newTime: string
+  reason?: string | null
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Dời buổi học] Buổi ${params.oldDate} ${params.oldTime} của lớp "${params.classTitle}" đã được gia sư ${params.tutorName} dời sang ${params.newDate} ${params.newTime}.` +
+      (params.reason ? `\nLý do: ${params.reason}.` : '')
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh trong lớp khi 1 BUỔI bị nghỉ (hủy buổi) */
+export async function notifyStudentsSessionCancelled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  date: string
+  time: string
+  reason: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nghỉ buổi] Buổi ${params.date} ${params.time} của lớp "${params.classTitle}" đã bị hủy bởi gia sư ${params.tutorName}.\n` +
+      `Lý do: ${params.reason}.\n` +
+      'Các buổi khác trong tuần vẫn diễn ra bình thường.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh trong lớp khi lớp ĐÓNG / bị XÓA */
+export async function notifyStudentsClassClosed(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  deleted: boolean
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[${params.deleted ? 'Lớp đã xóa' : 'Lớp đã đóng'}] Lớp "${params.classTitle}" (gia sư ${params.tutorName}) ` +
+        `${params.deleted ? 'đã bị xóa khỏi hệ thống' : 'đã kết thúc, không còn nhận học sinh'}. ` +
+        'Bạn có thể nhắn tin cho gia sư hoặc tìm lớp khác phù hợp.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/**
+ * Nhắc lịch NGÀY MAI cho học sinh trong lớp nhóm (cron /api/cron/reminder).
+ * Gửi SYSTEM message vào hội thoại tutor↔student (kèm email nếu cấu hình Resend).
+ */
+export async function notifyStudentsClassSessionReminder(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  subjectName: string
+  date: string
+  time: string
+  endTime: string
+  address: string | null
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nhắc lịch] Lớp "${params.classTitle}" (môn ${params.subjectName}) có buổi học NGÀY MAI: ` +
+      `${params.date} · ${params.time}–${params.endTime}.` +
+      (params.address ? `\nĐịa điểm: ${params.address}.` : '') +
+      '\nVui lòng đến đúng giờ.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+// ===== Sổ học phí lớp nhóm =====
+
+/** Thông báo cho PHỤ HUYNH khi gia sư ghi nhận đã đóng học phí tháng */
+export async function notifyStudentFeeRecorded(params: {
+  tutorId: string
+  tutorName: string
+  studentId: string
+  studentName: string
+  classTitle: string
+  period: string // YYYY-MM
+  amount: number
+  method: string
+  note?: string | null
+}) {
+  const [y, m] = params.period.split('-')
+  const methodLabel: Record<string, string> = {
+    CASH: 'tiền mặt',
+    BANK: 'chuyển khoản',
+    MOMO: 'ví MoMo',
+    OTHER: 'hình thức khác',
+  }
+  const body =
+    `[Học phí] Gia sư ${params.tutorName} đã ghi nhận học phí tháng ${m}/${y} của ` +
+    `${params.studentName} trong lớp "${params.classTitle}": ${vnd(params.amount)} ` +
+    `(${methodLabel[params.method] ?? params.method}).` +
+    (params.note ? `\nGhi chú: ${params.note}.` : '') +
+    '\nCảm ơn bạn đã đồng hành cùng lớp học!'
+  await pushSystemMessage({
+    tutorId: params.tutorId,
+    studentId: params.studentId,
+    senderId: params.tutorId,
+    body,
+  })
+}
+
+/** Thông báo khi gia sư NGHỈ BUỔI kèm xếp luôn BUỔI DẠY BÙ mới */
+export async function notifyStudentsMakeupScheduled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  oldDate: string
+  oldTime: string
+  newDate: string
+  newTime: string
+  reason: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nghỉ buổi → dạy bù] Buổi ${params.oldDate} ${params.oldTime} của lớp "${params.classTitle}" ` +
+      `sẽ NGHỈ (lý do: ${params.reason}) và được DẠY BÙ vào ${params.newDate} · ${params.newTime}.\n` +
+      'Vui lòng sắp xếp đến buổi bù đúng giờ.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}
+
+/** Thông báo cho học sinh khi buổi bị hủy do NGÀY NGHỈ LỄ (thêm mới / đổi lịch lễ) */
+export async function notifyStudentsHolidayCancelled(params: {
+  tutorId: string
+  tutorName: string
+  classTitle: string
+  date: string
+  time: string
+  holidayName: string
+  students: { id: string; name: string }[]
+}) {
+  for (const s of params.students) {
+    const body =
+      `[Nghỉ lễ] Buổi ${params.date} ${params.time} của lớp "${params.classTitle}" được nghỉ ` +
+      `do ngày nghỉ lễ: ${params.holidayName}.\n` +
+      'Các buổi khác trong lịch vẫn diễn ra bình thường.'
+    await pushSystemMessage({
+      tutorId: params.tutorId,
+      studentId: s.id,
+      senderId: params.tutorId,
+      body,
+    })
+  }
+}

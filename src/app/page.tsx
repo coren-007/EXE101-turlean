@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { useApp } from '@/lib/store'
 import { Header } from '@/components/header'
 import { Footer } from '@/components/footer'
@@ -12,9 +12,21 @@ import { DashboardPage } from '@/components/pages/dashboard-page'
 import { ProfileEditPage } from '@/components/pages/profile-edit-page'
 import { OnboardingPage } from '@/components/pages/onboarding-page'
 import { MessagesPage } from '@/components/pages/messages-page'
+import { FavoritesPage } from '@/components/pages/favorites-page'
 
 export default function Home() {
-  const { view, user, setUser, navigate } = useApp()
+  const { view, user, setUser } = useApp()
+
+  // P5-fix: hydration an toàn — SSR luôn render view 'home', client cũng render 'home'
+  // trong lần hydrate ĐẦU TIÊN (kể cả khi URL có ?view=...), chỉ chuyển sang view thật
+  // sau khi mount. Tránh React #418 (hydration mismatch) khi mở trực tiếp link chia sẻ
+  // dạng /?view=search, /?view=login, /?view=tutor&id=...
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  )
+  const activeView = mounted ? view : ({ name: 'home' } as const)
 
   // Load user on mount
   useEffect(() => {
@@ -30,6 +42,7 @@ export default function Home() {
             avatar: data.user.avatar,
             phone: data.user.phone,
             district: data.user.district,
+            city: data.user.city,
           })
         }
       })
@@ -37,10 +50,10 @@ export default function Home() {
   }, [setUser])
 
   const renderView = () => {
-    switch (view.name) {
+    switch (activeView.name) {
       case 'home': return <HomePage />
-      case 'search': return <SearchPage />
-      case 'tutor': return <TutorProfilePage id={view.id} />
+      case 'search': return <SearchPage key={JSON.stringify(activeView)} />
+      case 'tutor': return <TutorProfilePage id={activeView.id} />
       case 'login': return <AuthPage initialMode="login" />
       case 'register': return <AuthPage initialMode="register" />
       case 'dashboard': return <DashboardPage />
@@ -49,20 +62,21 @@ export default function Home() {
       // View cũ (tương thích URL) — dashboard tự chuyển hướng vào tab tương ứng
       case 'manage-subjects': return <DashboardPage />
       case 'manage-availability': return <DashboardPage />
-      case 'messages': return <MessagesPage initialConversationId={view.conversationId} />
+      case 'messages': return <MessagesPage initialConversationId={activeView.conversationId} />
+      case 'favorites': return <FavoritesPage />
       case 'my-profile': return user ? <TutorProfilePage id={user.id} /> : <HomePage />
       default: return <HomePage />
     }
   }
 
   // Auth pages and onboarding don't show header/footer
-  const isFullPage = view.name === 'login' || view.name === 'register' || view.name === 'onboarding'
+  const isFullPage = activeView.name === 'login' || activeView.name === 'register' || activeView.name === 'onboarding'
 
   if (isFullPage) {
-    if (view.name === 'login' || view.name === 'register') {
+    if (activeView.name === 'login' || activeView.name === 'register') {
       return (
         <div className="min-h-screen flex flex-col bg-muted/20">
-          <AuthPage initialMode={view.name === 'register' ? 'register' : 'login'} />
+          <AuthPage initialMode={activeView.name === 'register' ? 'register' : 'login'} />
         </div>
       )
     }

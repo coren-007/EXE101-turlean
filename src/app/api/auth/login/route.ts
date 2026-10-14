@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       name: user.name,
       role: user.role,
       avatar: user.avatar,
+      city: user.city,
     })
   } catch (e: any) {
     return NextResponse.json({ error: e.message || 'Đăng nhập thất bại' }, { status: 500 })

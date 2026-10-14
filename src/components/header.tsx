@@ -10,8 +10,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { LogOut, Menu, GraduationCap, ChevronDown, ExternalLink, MessageSquare, LayoutDashboard, Search } from 'lucide-react'
+import { LogOut, Menu, GraduationCap, ChevronDown, ExternalLink, MessageSquare, LayoutDashboard, Search, Heart } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import { useFavorites } from '@/lib/favorites'
 import {
   Sheet,
   SheetContent,
@@ -60,6 +61,12 @@ export function Header() {
   }
 
   const isActive = (name: string) => view.name === name
+
+  // Wishlist — load theo role (guest → localStorage, login → DB kèm merge)
+  const { ids: favoriteIds, load: loadFavorites } = useFavorites()
+  useEffect(() => {
+    void loadFavorites(user ? { id: user.id } : null)
+  }, [user, loadFavorites])
 
   const navItems: { label: string; view: any; show: boolean }[] = [
     { label: 'Khám phá', view: { name: 'home' }, show: true },
@@ -116,6 +123,22 @@ export function Header() {
               </Button>
             )}
 
+            {/* Gia sư đã lưu (wishlist) với badge số lượng */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative h-10 w-10 rounded-full"
+              onClick={() => navigate({ name: 'favorites' })}
+              aria-label={`Gia sư đã lưu${favoriteIds.length > 0 ? ` (${favoriteIds.length})` : ''}`}
+            >
+              <Heart className={`h-5 w-5 ${view.name === 'favorites' ? 'fill-rose-500 text-rose-500' : ''}`} />
+              {favoriteIds.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {favoriteIds.length > 9 ? '9+' : favoriteIds.length}
+                </span>
+              )}
+            </Button>
+
             {/* Tin nhắn với badge chưa đọc */}
             {user && (
               <Button
@@ -159,6 +182,15 @@ export function Header() {
                   <DropdownMenuItem onClick={() => navigate({ name: 'dashboard' })} className="cursor-pointer">
                     <LayoutDashboard className="h-4 w-4 mr-2" />
                     Trang quản lý
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate({ name: 'favorites' })} className="cursor-pointer">
+                    <Heart className="h-4 w-4 mr-2" />
+                    Gia sư đã lưu
+                    {favoriteIds.length > 0 && (
+                      <span className="ml-auto h-4 min-w-4 px-1 rounded-full bg-rose-500/10 text-rose-600 text-[10px] font-bold flex items-center justify-center">
+                        {favoriteIds.length}
+                      </span>
+                    )}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate({ name: 'messages' })} className="cursor-pointer">
                     <MessageSquare className="h-4 w-4 mr-2" />

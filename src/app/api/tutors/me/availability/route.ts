@@ -32,11 +32,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Giờ bắt đầu phải trước giờ kết thúc' }, { status: 400 })
   }
 
-  // Check overlap with existing slots
+  // Check overlap with existing slots (cùng 1 ngày không chồng lấn)
   const existing = await db.availability.findMany({ where: { tutorId: user.id, dayOfWeek } })
   for (const slot of existing) {
     if (startTime < slot.endTime && endTime > slot.startTime) {
-      return NextResponse.json({ error: 'Trùng lịch với slot đã có' }, { status: 400 })
+      return NextResponse.json({ error: `Trùng khung giờ đã có (${slot.startTime}–${slot.endTime})` }, { status: 400 })
     }
   }
 
