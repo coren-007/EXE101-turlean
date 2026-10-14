@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { useApp } from '@/lib/store'
 import { Header } from '@/components/header'
 import { Footer } from '@/components/footer'
@@ -21,8 +21,11 @@ export default function Home() {
   // trong lần hydrate ĐẦU TIÊN (kể cả khi URL có ?view=...), chỉ chuyển sang view thật
   // sau khi mount. Tránh React #418 (hydration mismatch) khi mở trực tiếp link chia sẻ
   // dạng /?view=search, /?view=login, /?view=tutor&id=...
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => { setMounted(true) }, [])
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  )
   const activeView = mounted ? view : ({ name: 'home' } as const)
 
   // Load user on mount
