@@ -27,7 +27,7 @@ export type View =
   | { name: 'favorites' }
   | { name: 'login' }
   | { name: 'register' }
-  | { name: 'dashboard'; tab?: 'overview' | 'subjects' | 'schedule' | 'classes' }
+  | { name: 'dashboard'; tab?: 'overview' | 'subjects' | 'schedule' | 'classes' | 'verification' }
   | { name: 'profile-edit' }
   | { name: 'onboarding' }
   | { name: 'manage-subjects' }
@@ -41,7 +41,7 @@ interface AppState {
     id: string
     email: string
     name: string
-    role: 'TUTOR' | 'STUDENT'
+    role: 'TUTOR' | 'STUDENT' | 'ADMIN'
     avatar?: string | null
     phone?: string | null
     district?: string | null
@@ -86,7 +86,7 @@ function parseInitialView(): View {
   if (v === 'register') return { name: 'register' }
   if (v === 'dashboard') {
     const t = params.get('tab')
-    const valid = ['overview', 'subjects', 'schedule', 'classes']
+    const valid = ['overview', 'subjects', 'schedule', 'classes', 'verification']
     return { name: 'dashboard', tab: valid.includes(t || '') ? (t as any) : undefined }
   }
   if (v === 'profile-edit') return { name: 'profile-edit' }

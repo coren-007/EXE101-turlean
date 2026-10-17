@@ -19,6 +19,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email hoặc mật khẩu không đúng' }, { status: 400 })
     }
 
+    // P6: tài khoản bị khóa do điểm tin cậy thấp (< 30) — không cho đăng nhập,
+    // hiện rõ lý do để người dùng biết phải liên hệ bộ phận hỗ trợ.
+    if (user.lockedAt) {
+      return NextResponse.json(
+        {
+          error:
+            'Tài khoản đã bị khóa do điểm tin cậy xuống dưới 30/100 (hủy lịch nhiều lần sát giờ). ' +
+            'Vui lòng liên hệ hỗ trợ để được xem xét mở khóa.',
+          locked: true,
+          lockedReason: user.lockedReason,
+        },
+        { status: 403 },
+      )
+    }
+
     const token = await createSession(user.id)
     await setSessionCookie(token)
 

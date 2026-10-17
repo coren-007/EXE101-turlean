@@ -71,7 +71,8 @@ export function Header() {
   const navItems: { label: string; view: any; show: boolean }[] = [
     { label: 'Khám phá', view: { name: 'home' }, show: true },
     { label: 'Tìm gia sư', view: { name: 'search' }, show: !user || user.role === 'STUDENT' },
-    { label: 'Trang quản lý', view: { name: 'dashboard' }, show: !!user },
+    // Admin vào trang quản trị riêng; gia sư/phụ huynh vào Trang quản lý thường
+    { label: user?.role === 'ADMIN' ? 'Trang quản trị' : 'Trang quản lý', view: { name: 'dashboard' }, show: !!user },
   ].filter(i => i.show)
 
   return (
@@ -175,7 +176,7 @@ export function Header() {
                   <div className="px-2 py-1.5">
                     <p className="text-sm font-semibold truncate">{user.name}</p>
                     <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-semibold uppercase tracking-wide">
-                      {user.role === 'TUTOR' ? 'Gia sư' : 'Phụ huynh/Học sinh'}
+                      {user.role === 'TUTOR' ? 'Gia sư' : user.role === 'ADMIN' ? 'Quản trị viên' : 'Phụ huynh/Học sinh'}
                     </span>
                   </div>
                   <DropdownMenuSeparator />

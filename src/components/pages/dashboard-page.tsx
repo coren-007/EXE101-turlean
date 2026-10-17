@@ -24,6 +24,7 @@ import {
 import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
 import { TutorSubjectsPanel } from '@/components/dashboard/tutor-subjects-panel'
+import { TutorVerificationPanel } from '@/components/dashboard/tutor-verification-panel'
 import { TutorScheduleCalendar } from '@/components/dashboard/schedule/tutor-schedule-calendar'
 import { TutorClassManager } from '@/components/dashboard/tutor-class-manager'
 import { StudentClassesPanel } from '@/components/dashboard/student-classes-panel'
@@ -148,9 +149,9 @@ interface ClassGroup {
 export function DashboardPage() {
   const { user, navigate, view } = useApp()
 
-  // Workspace tab cho gia sư: Tổng quan / Môn & giá / Lịch dạy / Lớp học
+  // Workspace tab cho gia sư: Tổng quan / Môn & giá / Lịch dạy / Lớp học / Xác minh
   // (tương thích view cũ manage-subjects / manage-availability)
-  const activeWsTab: 'overview' | 'subjects' | 'schedule' | 'classes' =
+  const activeWsTab: 'overview' | 'subjects' | 'schedule' | 'classes' | 'verification' =
     view.name === 'dashboard' && view.tab
       ? view.tab
       : view.name === 'manage-subjects'
@@ -782,13 +783,14 @@ export function DashboardPage() {
     </>
   )
 
-  // TUTOR DASHBOARD LAYOUT — workspace 4 tab: Tổng quan / Môn & giá / Lịch dạy / Lớp học
+  // TUTOR DASHBOARD LAYOUT — workspace 5 tab: Tổng quan / Môn & giá / Lịch dạy / Lớp học / Xác minh
   if (isTutor) {
-    const wsTabs: { id: 'overview' | 'subjects' | 'schedule' | 'classes'; label: string }[] = [
+    const wsTabs: { id: 'overview' | 'subjects' | 'schedule' | 'classes' | 'verification'; label: string }[] = [
       { id: 'overview', label: 'Tổng quan' },
       { id: 'subjects', label: 'Môn & giá' },
       { id: 'schedule', label: 'Lịch dạy' },
       { id: 'classes', label: 'Lớp học' },
+      { id: 'verification', label: 'Xác minh' },
     ]
     return (
       <div>
@@ -1081,6 +1083,7 @@ export function DashboardPage() {
         {activeWsTab === 'subjects' && <TutorSubjectsPanel />}
         {activeWsTab === 'schedule' && <TutorScheduleCalendar />}
         {activeWsTab === 'classes' && <TutorClassManager />}
+        {activeWsTab === 'verification' && <TutorVerificationPanel />}
 
         <DashboardDialogs />
       </div>

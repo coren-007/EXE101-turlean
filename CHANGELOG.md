@@ -2,6 +2,29 @@
 
 Mọi thay đổi đáng chú ý của dự án GiaSuConnect (Turlean).
 
+## [1.3.0] — 2026-10-17
+
+Phase 6 — Trust & Admin: xác minh bằng cấp THẬT + trang quản trị + tự khóa tài khoản hay hủy lịch.
+
+### Nổi bật
+
+- **Xác minh bằng cấp thật (thay cho flag DB)**: gia sư upload ảnh/PDF bằng cấp (≤ 5MB, lưu trong DB — chạy được cả SQLite lẫn PostgreSQL không cần dịch vụ file ngoài) → **admin duyệt/từ chối kèm lý do** → badge "Đã xác minh" trên hồ sơ & tìm kiếm giờ do con người xác nhận, không còn seed giả.
+  - Tab "Xác minh" mới trong Tutor Studio: 3 loại giấy tờ (Bằng cấp/Chứng chỉ/Giấy tờ tùy thân), kéo-thả tệp, ghi chú, rút lại yêu cầu đang chờ, xem lý do bị từ chối để gửi lại.
+  - Chặn trùng: mỗi loại chỉ 1 yêu cầu PENDING; từ chối phải kèm lý do ≥ 5 ký tự (gia sư biết phải gửi lại thế nào).
+- **Trang quản trị** (role ADMIN, tài khoản `admin@turlean.vn` — không đăng ký công khai được): 3 tab — Tổng quan (stats toàn hệ thống + bảng 10 gia sư điểm tin cậy thấp nhất), Duyệt xác minh (xem file ảnh/PDF ngay trong dialog, duyệt/từ chối), Tài khoản khóa (mở khóa có xác nhận).
+- **Tự khóa tài khoản khi độ tin cậy < 30/100** (mỗi lần hủy lịch bị trừ điểm đều kiểm tra lại): không đăng nhập được (kèm lý do rõ ràng), session cũ chết NGAY trên mọi API, admin mở khóa được (điểm giữ nguyên — nếu tiếp tục hủy sát giờ sẽ tự khóa lại).
+- Phản hồi hủy lịch mới nói rõ "tài khoản đã bị KHÓA" ngay tại lúc trừ điểm xuyên ngưỡng.
+
+### Chi tiết kỹ thuật
+
+- Schema: `User.lockedAt/lockedReason` + model `VerificationRequest` (fileData Bytes, index status+createdAt) — migration `20261017000000_phase6_admin_verification_lock` (PostgreSQL; sandbox dev dùng `prisma db push`).
+- Bảo mật 2 tầng: login chặn + `getCurrentUser()` trả null cho tài khoản khóa (mọi API tự động 401).
+- Phân quyền chặt: `requireAuth('ADMIN')`; register zod chỉ TUTOR|STUDENT (không thể tự tạo admin); file verification chỉ admin đọc được (cookie session — link không chia sẻ được); response JSON không bao giờ chứa fileData.
+- API mới: `GET/POST/DELETE /api/tutors/me/verification` · `GET /api/admin/stats` · `GET /api/admin/verification` · `GET /api/admin/verification/[id]/file` · `POST /api/admin/verification/[id]/review` · `GET /api/admin/users?locked=1` · `POST /api/admin/users/[id]/unlock`.
+- Hủy lịch (cancel route): gọi `applyAutoLockIfNeeded` best-effort sau transaction chính — lỗi auto-lock không làm fail việc hủy.
+- Seed: thêm admin + 4 yêu cầu demo (2 chờ duyệt / 1 đã duyệt / 1 bị từ chối kèm lý do).
+- Kiểm chứng: **60/60 test phase 6 mới** (phân quyền, upload, duyệt/từ chối, auto-lock, unlock, idempotent) + hồi quy toàn bộ 188 test cũ = **248/248 PASS** · typecheck 0 lỗi · lint 0 lỗi · production build 26+7 route · E2E browser admin (login → duyệt → badge xác minh thật) + gia sư (upload → rút lại) · prod hydration sạch trên deep-link.
+
 ## [1.2.1] — 2026-10-13
 
 Gắn Google Form đánh giá sản phẩm — thu phản hồi người dùng bản deploy.

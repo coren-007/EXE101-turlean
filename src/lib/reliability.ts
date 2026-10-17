@@ -24,6 +24,39 @@ export const RELIABILITY_TIERS = [
 
 export const BASE_SCORE = 100
 
+// P6: ngưỡng tự khóa tài khoản — dưới ngưỡng này thì tài khoản bị khóa
+// (không đăng nhập được, mọi API coi như chưa xác thực) cho tới khi admin mở khóa.
+export const LOCK_THRESHOLD = 30
+
+/**
+ * P6: Tự khóa tài khoản nếu điểm tin cậy rơi dưới LOCK_THRESHOLD.
+ * Được gọi sau mỗi lần hủy lịch (khi điểm vừa bị trừ). Idempotent —
+ * nếu tài khoản đã khóa (hoặc điểm còn đủ cao) thì không làm gì cả.
+ */
+export async function applyAutoLockIfNeeded(userId: string): Promise<{
+  locked: boolean
+  score: number
+}> {
+  const summary = await computeReliability(userId)
+  if (summary.score >= LOCK_THRESHOLD) {
+    return { locked: false, score: summary.score }
+  }
+
+  const user = await db.user.findUnique({ where: { id: userId }, select: { id: true, lockedAt: true } })
+  if (!user || user.lockedAt) {
+    return { locked: user?.lockedAt ? true : false, score: summary.score }
+  }
+
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      lockedAt: new Date(),
+      lockedReason: `Điểm tin cậy ${summary.score}/100 — thấp hơn ngưỡng ${LOCK_THRESHOLD}`,
+    },
+  })
+  return { locked: true, score: summary.score }
+}
+
 /**
  * Phân loại mức độ vi phạm khi hủy lịch.
  * Nguyên tắc: hủy càng sát giờ học + đã được xác nhận → phạt càng nặng.

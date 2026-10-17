@@ -55,13 +55,16 @@ export async function getCurrentUser() {
       await db.session.delete({ where: { id: session.id } })
       return null
     }
+    // P6: tài khoản bị khóa (điểm tin cậy < 30) ⇒ coi như chưa xác thực trên MỌI API.
+    // Session cũ bị vô hiệu ngay lập tức; trang login hiển thị lý do khóa.
+    if (session.user.lockedAt) return null
     return session.user
   } catch {
     return null
   }
 }
 
-export async function requireAuth(role?: 'TUTOR' | 'STUDENT') {
+export async function requireAuth(role?: 'TUTOR' | 'STUDENT' | 'ADMIN') {
   const user = await getCurrentUser()
   if (!user) {
     throw new Error('UNAUTHORIZED')

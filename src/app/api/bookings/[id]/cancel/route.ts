@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
-import { classifyCancellation } from '@/lib/reliability'
+import { classifyCancellation, applyAutoLockIfNeeded } from '@/lib/reliability'
 import { notifyCancellation } from '@/lib/notify'
 
 const cancelSchema = z.object({
@@ -107,6 +107,21 @@ export async function POST(
     points: rule.points,
   })
 
+  // P6: sau khi trừ điểm, tự khóa tài khoản của người hủy nếu điểm tin cậy < 30.
+  // Là best-effort sau giao dịch chính — lỗi ở đây không làm fail request hủy.
+  let autoLock: { locked: boolean; score: number } | null = null
+  try {
+    const cancellerId = isTutor ? booking.tutorId : booking.studentId
+    autoLock = await applyAutoLockIfNeeded(cancellerId)
+  } catch (e) {
+    console.error('[auto-lock] không kiểm tra được ngưỡng khóa:', e)
+  }
+
+  const lockWarning =
+    autoLock?.locked
+      ? ` Tài khoản của bạn đã bị KHÓA do điểm tin cậy còn ${autoLock.score}/100 — sẽ không thể đăng nhập cho tới khi quản trị viên mở khóa.`
+      : ''
+
   return NextResponse.json({
     booking: updated,
     violation: {
@@ -115,9 +130,11 @@ export async function POST(
       label: rule.label,
       hoursBefore: Math.round(hoursBefore * 10) / 10,
     },
+    autoLocked: autoLock?.locked ?? false,
+    reliabilityScore: autoLock?.score ?? null,
     message:
       rule.points > 0
-        ? `Đã hủy lịch. Lưu ý: ${rule.label.toLowerCase()} — trừ ${rule.points} điểm độ tin cậy.`
-        : 'Đã hủy lịch (không ảnh hưởng điểm độ tin cậy).',
+        ? `Đã hủy lịch. Lưu ý: ${rule.label.toLowerCase()} — trừ ${rule.points} điểm độ tin cậy.${lockWarning}`
+        : 'Đã hủy lịch (không ảnh hưởng điểm độ tin cậy).' + lockWarning,
   })
 }

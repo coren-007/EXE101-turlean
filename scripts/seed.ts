@@ -472,6 +472,8 @@ async function main() {
   await db.review.deleteMany()
   await db.booking.deleteMany()
   await db.tutorSubject.deleteMany()
+  // P6: yêu cầu xác minh bằng cấp (tutor-side trước admin-side qua onDelete)
+  await db.verificationRequest.deleteMany()
   await db.user.deleteMany()
   await db.subject.deleteMany()
 
@@ -494,6 +496,8 @@ async function main() {
 
   // Create tutors
   const tutorIds: string[] = []
+  // P6: giữ object đầy đủ (kèm isVerified) để tạo demo yêu cầu xác minh phía dưới
+  const tutors: { id: string; name: string; isVerified: boolean }[] = []
   let tutorIdx = 0
   for (const t of TUTORS) {
     const loc = LOCATIONS.find(l => l.city === t.location.city && l.district === t.location.district)!
@@ -527,6 +531,7 @@ async function main() {
       }
     })
     tutorIds.push(tutor.id)
+    tutors.push({ id: tutor.id, name: tutor.name, isVerified: tutor.isVerified })
 
     // Add subjects with price
     for (const slug of t.subjects) {
@@ -880,6 +885,80 @@ async function main() {
     console.log('✓ Created demo series (8 buổi Toán) + 2 conversations with system notifications')
   }
 
+  // ===== P6: Admin + xác minh bằng cấp =====
+  const daysAgoP6 = (n: number) => new Date(Date.now() - n * 86400000)
+  // Tài khoản quản trị viên (không đăng ký công khai được — zod register chỉ TUTOR|STUDENT)
+  const adminHash = await bcrypt.hash('123456', 10)
+  const admin = await db.user.create({
+    data: {
+      email: 'admin@turlean.vn',
+      passwordHash: adminHash,
+      name: 'Quản trị GiaSuConnect',
+      role: 'ADMIN',
+      city: 'Hà Nội',
+    },
+  })
+
+  // Demo yêu cầu xác minh: 1x1 PNG nhỏ nhúng base64 (không cần thư viện ảnh)
+  const DEMO_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const pendingTutors = tutors.filter(t => !t.isVerified).slice(0, 2)
+  const approvedTutor = tutors.find(t => t.isVerified)
+  if (pendingTutors.length && approvedTutor) {
+    // 2 yêu cầu đang chờ duyệt — admin mở trang "Duyệt xác minh" là có việc làm ngay
+    for (const t of pendingTutors) {
+      await db.verificationRequest.create({
+        data: {
+          tutorId: t.id,
+          kind: 'DEGREE',
+          fileName: 'bang-cap.png',
+          fileType: 'image/png',
+          fileSize: DEMO_PNG.length,
+          fileData: DEMO_PNG,
+          note: 'Bằng Cử nhân Sư phạm — mong admin duyệt giúp, cảm ơn ạ!',
+          status: 'PENDING',
+        },
+      })
+    }
+    // 1 lịch sử đã duyệt (khớp isVerified=true) + 1 bị từ chối kèm lý do
+    await db.verificationRequest.create({
+      data: {
+        tutorId: approvedTutor.id,
+        kind: 'DEGREE',
+        fileName: 'bang-cap.png',
+        fileType: 'image/png',
+        fileSize: DEMO_PNG.length,
+        fileData: DEMO_PNG,
+        status: 'APPROVED',
+        reviewedById: admin.id,
+        reviewedAt: daysAgoP6(3),
+        reviewNote: 'Đã đối chiếu bằng gốc khi gia sư đến văn phòng.',
+        createdAt: daysAgoP6(5),
+      },
+    })
+    const rejectedTutor = tutors.filter(t => !t.isVerified && !pendingTutors.includes(t))[0]
+    if (rejectedTutor) {
+      await db.verificationRequest.create({
+        data: {
+          tutorId: rejectedTutor.id,
+          kind: 'CERTIFICATE',
+          fileName: 'chung-chi.png',
+          fileType: 'image/png',
+          fileSize: DEMO_PNG.length,
+          fileData: DEMO_PNG,
+          status: 'REJECTED',
+          reviewedById: admin.id,
+          reviewedAt: daysAgoP6(2),
+          reviewNote: 'Ảnh chụp quá mờ, không đọc được số hiệu chứng chỉ — vui lòng chụp lại rõ hơn.',
+          createdAt: daysAgoP6(4),
+        },
+      })
+    }
+    console.log('✓ Created admin account + 4 demo verification requests')
+  }
+
   console.log('\n✅ Seed completed!')
   console.log('Demo accounts (password: 123456):')
   console.log('  Tutor HN:    minhanh.tutor@example.com')
@@ -887,6 +966,7 @@ async function main() {
   console.log('  Tutor ĐN:    kimngan.tutor@example.com')
   console.log('  Student HN:  hoa.parent@example.com')
   console.log('  Student HCM: minhtam.parent@example.com')
+  console.log('  Admin:       admin@turlean.vn')
 }
 
 main()
