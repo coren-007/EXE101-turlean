@@ -71,6 +71,12 @@ function addWeeks(dateStr: string, weeks: number): string {
   return `${y}-${m}-${day}`
 }
 
+// "20/10/2026" từ chuỗi YYYY-MM-DD (tách chuỗi trực tiếp — tránh lệch múi giờ của new Date(iso))
+function fmtDateVi(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-')
+  return `${d}/${m}/${y}`
+}
+
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
   if (!user) {
@@ -188,17 +194,8 @@ export async function POST(req: NextRequest) {
       s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
     )
   }
-  const classConflict = await classConflictFor(date)
-  if (classConflict) {
-    return NextResponse.json(
-      {
-        error: `Trùng lịch lớp học cố định "${classConflict.class.title}" (${classConflict.startTime}–${classConflict.endTime}). Vui lòng chọn giờ khác.`,
-      },
-      { status: 400 },
-    )
-  }
 
-  // Conflict check cho GIA SƯ (theo từng ngày của khóa định kỳ)
+  // Conflict check cho GIA SƯ / HỌC SINH (P1: chống double-booking 2 chiều, theo từng ngày)
   const conflictFor = async (d: string, who: 'tutor' | 'student') =>
     db.booking.findFirst({
       where: {
@@ -212,40 +209,50 @@ export async function POST(req: NextRequest) {
       },
     })
 
-  if (await conflictFor(date, 'tutor')) {
-    return NextResponse.json({ error: 'Gia sư đã có lịch vào khung giờ này. Vui lòng chọn giờ khác.' }, { status: 400 })
-  }
-
-  // Conflict check cho HỌC SINH (P1: chống double-booking học sinh)
-  if (await conflictFor(date, 'student')) {
-    return NextResponse.json({ error: 'Bạn đã có lịch học vào khung giờ này. Vui lòng chọn giờ khác.' }, { status: 400 })
-  }
-
   // Server tự tính tiền từ giá môn học × thời lượng thực (P0-6)
   const totalAmount = Math.round(ts.pricePerHour * durationHours)
 
-  // ===== Lớp học định kỳ: kiểm tra TỪNG tuần, bỏ qua tuần bị trùng lịch =====
+  // ===== Lớp học định kỳ: kiểm tra TỪNG tuần (kể cả tuần ĐẦU), tuần trùng lịch bị bỏ qua kèm lý do =====
+  // Fix bất nhất repeatWeeks: trước đây tuần đầu trùng lịch → chặn cả request (400),
+  // trong khi tuần 2+ trùng thì bỏ qua êm thấm. Giờ xử lý ĐỒNG NHẤT cho mọi tuần:
+  // tuần nào trùng (lớp cố định / gia sư bận / học sinh bận) đều được bỏ qua + ghi lý do,
+  // khóa học vẫn đặt được từ tuần kế tiếp còn trống. Chỉ từ chối khi KHÔNG còn tuần nào
+  // hợp lệ — khi đó trả về thông điệp cụ thể của tuần đầu tiên (giữ chất lượng thông báo
+  // như hành vi cũ của buổi lẻ: user biết ngay phải đổi khung giờ nào).
   const skipped: { date: string; reason: string }[] = []
-  const validDates: string[] = [date]
-  for (let i = 1; i < weeks; i++) {
+  const validDates: string[] = []
+  let firstBlockMessage: string | null = null // thông điệp đầy đủ của tuần ĐẦU bị chặn
+  for (let i = 0; i < weeks; i++) {
     const d = addWeeks(date, i)
-    if (await conflictFor(d, 'tutor')) {
+    const cc = await classConflictFor(d)
+    if (cc) {
+      skipped.push({ date: d, reason: `Trùng lớp cố định "${cc.class.title}"` })
+      if (i === 0) {
+        firstBlockMessage = `Trùng lịch lớp học cố định "${cc.class.title}" (${cc.startTime}–${cc.endTime})`
+      }
+    } else if (await conflictFor(d, 'tutor')) {
       skipped.push({ date: d, reason: 'Gia sư bận khung giờ này' })
+      if (i === 0) {
+        firstBlockMessage = 'Gia sư đã có lịch vào khung giờ này'
+      }
     } else if (await conflictFor(d, 'student')) {
       skipped.push({ date: d, reason: 'Bạn có lịch học trùng giờ' })
-    } else {
-      const cc = await classConflictFor(d)
-      if (cc) {
-        skipped.push({ date: d, reason: `Trùng lớp cố định "${cc.class.title}"` })
-      } else {
-        validDates.push(d)
+      if (i === 0) {
+        firstBlockMessage = 'Bạn đã có lịch học vào khung giờ này'
       }
+    } else {
+      validDates.push(d)
     }
   }
 
-  // Không còn buổi nào hợp lệ sau khi lọc conflict (trường hợp hiếm)
+  // Mọi tuần đều trùng lịch → chặn kèm lý do cụ thể của tuần đầu
   if (validDates.length === 0) {
-    return NextResponse.json({ error: 'Không thể đặt lịch: tất cả các tuần đều trùng lịch.' }, { status: 400 })
+    return NextResponse.json(
+      {
+        error: `${firstBlockMessage ?? 'Tất cả các tuần đều trùng lịch'} (${fmtDateVi(date)}). Vui lòng chọn khung giờ khác.`,
+      },
+      { status: 400 },
+    )
   }
 
   // Các buổi cùng khóa chia sẻ seriesId (>= 2 buổi mới là khóa)
@@ -288,6 +295,7 @@ export async function POST(req: NextRequest) {
 
   // Mục đích 1 & 2: thông báo cho gia sư ngay khi có yêu cầu mới
   // (rơi vào hội thoại Tin nhắn — gia sư thấy badge chưa đọc)
+  // firstDate = ngày buổi ĐẦU TIÊN THẬT SỰ của khóa (tuần đầu có thể bị bỏ qua do trùng lịch)
   await notifyTutorNewBooking({
     tutorId,
     studentId: user.id,
@@ -296,7 +304,7 @@ export async function POST(req: NextRequest) {
     mode,
     startTime,
     endTime,
-    firstDate: date,
+    firstDate: created[0].date,
     lastDate: created.length > 1 ? created[created.length - 1].date : undefined,
     sessionCount: created.length,
     amountPerSession: totalAmount,

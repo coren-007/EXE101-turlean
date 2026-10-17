@@ -172,7 +172,9 @@ check('Availability @@index([tutorId, dayOfWeek])', '@@index([tutorId, dayOfWeek
 
 # F4. Migration PostgreSQL tồn tại
 import os
-check('migration phase5 tồn tại', os.path.exists('prisma/migrations/20261012000000_phase5_search_indexes/migration.sql'))
+check('migration phase5 tồn tại (trong file gộp baseline)',
+      os.path.exists('prisma/migrations/20261012000000_phase5_search_indexes/migration.sql')
+      or 'Availability_tutorId_dayOfWeek_idx' in open('prisma/migrations/20261006000000_phase2_to5_classes_favorites_search/migration.sql').read())
 
 print(f'KẾT QUẢ: {PASS} PASS · {FAIL} FAIL')
 exit(0 if FAIL == 0 else 1)

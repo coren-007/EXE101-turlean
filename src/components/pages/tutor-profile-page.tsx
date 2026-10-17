@@ -409,11 +409,15 @@ export function TutorProfilePage({ id }: { id: string }) {
       if (!res.ok) throw new Error(data.error)
 
       // Mục đích 1 + 3: phản hồi minh bạch — báo rõ số buổi đã tạo + các tuần bị bỏ qua
+      // (kể cả TUẦN ĐẦU: server giờ bỏ qua nhất quán mọi tuần trùng lịch — fix bất nhất repeatWeeks)
       if (data.created > 1) {
+        const firstWeekSkipped = data.skipped?.some((s: any) => s.date === bookingDate)
         toast.success(
           `Đã tạo khóa học ${data.created} buổi với ${tutor.name} (mỗi tuần 1 buổi)` +
-          (data.skipped?.length ? ` — bỏ qua ${data.skipped.length} tuần trùng lịch` : ''),
-          { duration: 6000 },
+          (firstWeekSkipped
+            ? ` — buổi đầu ${formatDate(bookingDate)} trùng lịch nên khóa bắt đầu từ ${formatDate(data.date)}`
+            : data.skipped?.length ? ` — bỏ qua ${data.skipped.length} tuần trùng lịch` : ''),
+          { duration: 7000 },
         )
       } else {
         toast.success(`Đã gửi yêu cầu đặt lịch với ${tutor.name}`)
@@ -488,6 +492,7 @@ export function TutorProfilePage({ id }: { id: string }) {
     return classSlotsOfDate.some(b => start < toMin(b.endTime) && end > toMin(b.startTime))
   }
   const busyCount = availableSlots.filter(t => isSlotBusy(t) || isSlotClassBusy(t)).length
+  const oneBusyCount = availableSlots.filter(t => isSlotBusy(t) && !isSlotClassBusy(t)).length
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-6">
@@ -1238,20 +1243,34 @@ export function TutorProfilePage({ id }: { id: string }) {
                   {availableSlots.length > 0 ? (
                     <div className="grid grid-cols-4 gap-2">
                       {availableSlots.map(t => {
-                        const busy = isSlotBusy(t) || isSlotClassBusy(t)
+                        // Fix bất nhất repeatWeeks (UI): trùng LỚP NHÓM là trùng MỌI tuần → luôn vô hiệu;
+                        // bận 1-1 chỉ chắc chắn ở TUẦN ĐẦU → chế độ Khóa định kỳ vẫn chọn được
+                        // (server bỏ qua tuần đầu kèm lý do, khóa bắt đầu từ tuần kế)
+                        const classBusy = isSlotClassBusy(t)
+                        const oneBusy = isSlotBusy(t)
+                        const disabled = classBusy || (oneBusy && repeatWeeks === 1)
+                        const firstWeekSkip = oneBusy && repeatWeeks > 1
                         return (
                           <button
                             key={t}
-                            onClick={() => !busy && setBookingTime(t)}
-                            disabled={busy}
+                            onClick={() => !disabled && setBookingTime(t)}
+                            disabled={disabled}
                             className={`py-2 rounded-lg text-sm font-medium border transition-colors relative ${
-                              busy
+                              disabled
                                 ? 'bg-muted/50 border-border text-muted-foreground/60 line-through cursor-not-allowed'
-                                : bookingTime === t
-                                  ? 'bg-primary text-primary-foreground border-primary'
-                                  : 'border-border hover:border-primary/30'
+                                : firstWeekSkip
+                                  ? bookingTime === t
+                                    ? 'bg-amber-500 text-white border-amber-500'
+                                    : 'border-amber-400/70 text-amber-700 bg-amber-50 hover:border-amber-500'
+                                  : bookingTime === t
+                                    ? 'bg-primary text-primary-foreground border-primary'
+                                    : 'border-border hover:border-primary/30'
                             }`}
-                            title={busy ? 'Khung giờ này đã có lớp — chọn giờ khác' : `Buổi học ${t} + ${duration}h`}
+                            title={classBusy
+                              ? 'Trùng lớp học cố định của gia sư — chọn giờ khác'
+                              : firstWeekSkip
+                                ? `Tuần đầu (${t}) đã có người đặt — chọn giờ này thì khóa sẽ bắt đầu từ tuần kế tiếp`
+                                : `Buổi học ${t} + ${duration}h`}
                           >
                             {t}
                           </button>
@@ -1263,10 +1282,16 @@ export function TutorProfilePage({ id }: { id: string }) {
                       Gia sư không có lịch trống ngày này. Chọn ngày khác.
                     </div>
                   )}
-                  {busyCount > 0 && (
+                  {busyCount > 0 && repeatWeeks === 1 && (
                     <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1">
                       <Lock className="h-3 w-3" />
                       {busyCount} khung giờ đã có lớp — đã vô hiệu hóa, vui lòng chọn giờ còn lại.
+                    </p>
+                  )}
+                  {oneBusyCount > 0 && repeatWeeks > 1 && (
+                    <p className="text-[11px] text-amber-600/90 mt-2 flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      Khung giờ màu vàng: tuần đầu đã có người đặt — chọn vẫn được, khóa sẽ bắt đầu từ tuần kế tiếp.
                     </p>
                   )}
                   {classSlotsOfDate.length > 0 && availableSlots.length > 0 && (
@@ -1343,7 +1368,7 @@ export function TutorProfilePage({ id }: { id: string }) {
                   )}
                   <p className="text-[11px] text-emerald-600 flex items-center gap-1">
                     <CheckCircle2 className="h-3 w-3 shrink-0" />
-                    Tuần nào bị trùng lịch sẽ được bỏ qua và báo rõ sau khi đặt
+                    Tuần nào bị trùng lịch (kể cả buổi đầu) sẽ được bỏ qua và báo rõ sau khi đặt
                   </p>
                 </div>
               )}
