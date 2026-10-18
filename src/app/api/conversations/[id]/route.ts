@@ -4,10 +4,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 const sendSchema = z.object({
   body: z.string().trim().min(1, 'Tin nhắn không được để trống').max(1000, 'Tin nhắn tối đa 1000 ký tự'),
 })
+
+// SẸ-RL3 (B8, audit bảo mật): gửi tin nhắn KHÔNG có rate limit — kẻ xấu đăng
+// nhập được có thể spam hàng loạt (mỗi tin 1 dòng DB + push polling 4s toàn
+// hệ thống). Giới hạn 30 tin/phút/tài khoản — dư cho hội thoại thật.
 
 async function getOwnedConversation(id: string, userId: string) {
   const c = await db.conversation.findUnique({
@@ -33,17 +38,24 @@ export async function GET(
   const conversation = await getOwnedConversation(id, user.id)
   if (!conversation) return NextResponse.json({ error: 'Không tìm thấy hội thoại' }, { status: 404 })
 
-  // Đánh dấu đã đọc toàn bộ tin của đối tác (người mở thread)
-  await db.message.updateMany({
-    where: { conversationId: id, senderId: { not: user.id }, readAt: null },
-    data: { readAt: new Date() },
-  })
-
   const messages = await db.message.findMany({
     where: { conversationId: id },
-    orderBy: { createdAt: 'asc' },
-    take: 200, // giới hạn bảo vệ — đủ cho hội thoại dài
+    orderBy: { createdAt: 'desc' }, // SẸ-MS (B10): lấy MỚI NHẤT trước
+    take: 200, // giới hạn bảo vệ — hội thoại dài vẫn giữ được tin mới nhất
   })
+  // Trả về theo thứ tự thời gian tăng dần cho UI chat
+  messages.reverse()
+
+  // SẸ-MS (B10): chỉ đánh dấu đã đọc NHỮNG TIN ĐƯỢC TRẢ VỀ — trước đây
+  // updateMany đánh dấu TẤT CẢ tin đối tác (kể cả tin ngoài 200 chưa tải)
+  // là đã đọc trong khi người dùng chưa từng thấy chúng.
+  const returnedIds = messages.filter(m => m.senderId !== user.id).map(m => m.id)
+  if (returnedIds.length > 0) {
+    await db.message.updateMany({
+      where: { id: { in: returnedIds }, readAt: null },
+      data: { readAt: new Date() },
+    })
+  }
 
   const isTutorSide = conversation.tutorId === user.id
   const other = isTutorSide ? conversation.student : conversation.tutor
@@ -76,6 +88,15 @@ export async function POST(
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
+
+  // SẸ-RL3 (B8): chặn spam tin nhắn — 30 tin/phút/tài khoản
+  const rl = checkRateLimit(`msg:${user.id}`, 30, 60_000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Bạn đang gửi tin quá nhanh. Vui lòng đợi ít phút rồi thử lại.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   const { id } = await params
   const conversation = await getOwnedConversation(id, user.id)

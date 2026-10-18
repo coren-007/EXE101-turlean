@@ -5,8 +5,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 
+// SẸ-CSV (B9, audit bảo mật): guard FORMULA INJECTION. Tên học sinh / note là
+// dữ liệu người dùng nhập — nếu bắt đầu bằng = + - @ (hoặc TAB/CR) thì Excel
+// & Google Sheets sẽ THỰC THI như công thức khi mở file (=HYPERLINK,...,
+// +SUM(...), @command). Chuẩn OWASP: tiền tố dấu nháy đơn để vô hiệu hóa.
 function csvEscape(v: string | number | null | undefined): string {
-  const s = String(v ?? '')
+  let s = String(v ?? '')
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}` // vô hiệu hóa công thức khi mở Excel/Sheets
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
 }

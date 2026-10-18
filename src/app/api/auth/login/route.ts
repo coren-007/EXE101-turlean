@@ -27,6 +27,16 @@ export async function POST(req: NextRequest) {
         { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
       )
     }
+    // SẸ-XFF (B4, audit CAO): bucket theo EMAIL THUẦN — email không thể spoof
+    // qua header X-Forwarded-For giả. Dù kẻ tấn công thay đổi IP ảo mỗi request,
+    // dò brute-force MỘT tài khoản vẫn bị kẹp 10 lần / 5 phút.
+    const rlEmail = checkRateLimit(`login:em:${String(email).toLowerCase()}`, LOGIN_LIMIT, LOGIN_WINDOW_MS)
+    if (!rlEmail.ok) {
+      return NextResponse.json(
+        { error: `Tài khoản này đã được thử đăng nhập quá nhiều lần. Vui lòng thử lại sau ${rlEmail.retryAfterSec} giây.` },
+        { status: 429, headers: { 'Retry-After': String(rlEmail.retryAfterSec) } },
+      )
+    }
 
     const user = await db.user.findUnique({ where: { email } })
     if (!user) {

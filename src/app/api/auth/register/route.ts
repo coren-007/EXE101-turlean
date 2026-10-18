@@ -14,6 +14,8 @@ import { checkRateLimit, clientIp } from '@/lib/rate-limit'
 
 const REGISTER_LIMIT = 20
 const REGISTER_WINDOW_MS = 60 * 60 * 1000
+// SẸ-XFF (B4): trần toàn site — chống spam tạo rác khi kẻ tấn công fake IP
+const REGISTER_GLOBAL_LIMIT = 100
 
 const schema = z.object({
   name: z.string().min(2),
@@ -35,6 +37,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: `Bạn đã đăng ký quá nhiều lần. Vui lòng thử lại sau ${Math.ceil(rl.retryAfterSec / 60)} phút.` },
         { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+      )
+    }
+    // SẸ-XFF (B4): bucket GLOBAL — kẻ tấn công fake x-forwarded-for mỗi request
+    // thì mỗi IP ảo một bucket riêng, nhưng tổng toàn site vẫn bị kẹp 100/giờ.
+    // (Đủ rộng cho traffic thật + bộ test E2E, chặn tạo tài khoản rác hàng loạt.)
+    const rlGlobal = checkRateLimit('register:global', REGISTER_GLOBAL_LIMIT, REGISTER_WINDOW_MS)
+    if (!rlGlobal.ok) {
+      return NextResponse.json(
+        { error: 'Hệ thống đang nhận quá nhiều đăng ký. Vui lòng thử lại sau ít phút.' },
+        { status: 429, headers: { 'Retry-After': String(rlGlobal.retryAfterSec) } },
       )
     }
 
