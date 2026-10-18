@@ -24,7 +24,7 @@ const fmt = (d: Date) => {
 }
 
 async function main() {
-  const minhanh = await db.user.findUniqueOrThrow({ where: { email: 'minhanh.tutor@example.com' }, select: { id: true } })
+  const minhanh = await db.user.findUniqueOrThrow({ where: { email: 'minhanh.tutor@example.com' }, select: { id: true, address: true } })
   const hoa = await db.user.findUniqueOrThrow({ where: { email: 'hoa.parent@example.com' }, select: { id: true } })
   const sarah = await db.user.findUniqueOrThrow({ where: { email: 'sarah.tutor@example.com' }, select: { id: true } })
   const ielts = await db.subject.findFirstOrThrow({ where: { name: 'IELTS' }, select: { id: true } })
@@ -103,7 +103,47 @@ async function main() {
     series: { dates: satDates, slot: '18:00', ok: seriesOK },
     review: { bookingId: reviewBooking.id, tutorId: sarah.id, hadOldReview: !!oldReview },
     makeup: toan12 && futureSession ? { classId: toan12.id, className: toan12.title, sessionId: futureSession.id, date: futureSession.date, startTime: futureSession.startTime, endTime: futureSession.endTime } : null,
-    users: { minhanhId: minhanh.id, hoaId: hoa.id },
+    users: { minhanhId: minhanh.id, hoaId: hoa.id, minhanhAddress: minhanh.address },
+  }
+  // SẸ-TZ (B3) + B11: ngày bù PHẢI trống thật — mô phỏng đúng checkSessionReschedule
+  // của server (class session cùng ngày + booking 1-1 PENDING/CONFIRMED của gia sư),
+  // cộng cả các ngày e2e sắp đặt (single CN + series T7) để các journey không tự va nhau
+  if (data.makeup) {
+    const mk = data.makeup as any
+    const md = new Date(mk.date + 'T00:00:00Z')
+    const [classSess, tutorBookings] = await Promise.all([
+      db.classSession.findMany({
+        where: { status: { not: 'CANCELLED' }, date: { gte: mk.date }, class: { tutorId: minhanh.id } },
+        select: { date: true, startTime: true, endTime: true },
+      }),
+      db.booking.findMany({
+        where: { tutorId: minhanh.id, status: { in: ['PENDING', 'CONFIRMED'] }, date: { gte: mk.date } },
+        select: { date: true, startTime: true, endTime: true },
+      }),
+    ])
+    const e2eWillBook = new Set<string>([sun, ...satDates])
+    // Luật "existed" của route: buổi bù không được trùng (ngày + giờ bắt đầu) buổi CŨ
+    // của lớp — KỂ CẢ CANCELLED (findFirst không lọc status) → loại hết ngày lớp có buổi 18:00
+    const sameClassAny = await db.classSession.findMany({
+      where: { classId: mk.classId },
+      select: { date: true, startTime: true },
+    })
+    const existedKeys = new Set(sameClassAny.map(s => `${s.date} ${s.startTime}`))
+    const ov = (a0: string, a1: string, b0: string, b1: string) => a0 < b1 && b0 < a1
+    const T0 = '18:00', T1 = '20:30'
+    let picked: string | null = null
+    for (let i = 1; i <= 14; i++) {
+      const cand = new Date(md.getTime() + i * 864e5).toISOString().slice(0, 10)
+      if (e2eWillBook.has(cand)) continue
+      if (existedKeys.has(`${cand} ${T0}`)) continue
+      const clash = [...classSess, ...tutorBookings].some(
+        x => x.date === cand && ov(T0, T1, x.startTime, (x.endTime || '').slice(0, 5)),
+      )
+      if (!clash) { picked = cand; break }
+    }
+    mk.newDate = picked ?? new Date(md.getTime() + 7 * 864e5).toISOString().slice(0, 10)
+    mk.newStart = T0
+    mk.newEnd = T1
   }
   fs.writeFileSync('/home/z/my-project/scripts/e2e_data.json', JSON.stringify(data, null, 1))
   console.log(JSON.stringify(data, null, 1))

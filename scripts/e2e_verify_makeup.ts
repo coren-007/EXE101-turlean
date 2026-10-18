@@ -1,6 +1,7 @@
 // Verify luồng NGHỈ BUỔI + DẠY BÙ tạo qua UI trong E2E J3 (exit 0 nếu đúng)
-// Kỳ vọng: buổi gốc (e2e_data.makeup.sessionId, 27/10) → CANCELLED
-//          + buổi bù mới 2026-10-30 18:00–20:30 SCHEDULED, makeupForId = buổi gốc
+// Kỳ vọng: buổi gốc (e2e_data.makeup.sessionId) → CANCELLED
+//          + buổi bù mới (makeup.newDate — thứ Sáu kế sau, do prep/driver tính) 18:00–20:30
+//            SCHEDULED, makeupForId = buổi gốc
 import { PrismaClient } from '@prisma/client'
 import fs from 'fs'
 const db = new PrismaClient()
@@ -19,12 +20,13 @@ async function main() {
       select: { date: true, startTime: true, endTime: true, status: true },
     }),
   ])
+  const expectDate: string | null = mk.newDate ?? null
   const ok =
     origin?.status === 'CANCELLED' &&
-    makeup?.date === '2026-10-30' &&
     makeup?.startTime === '18:00' &&
     makeup?.endTime === '20:30' &&
-    makeup?.status === 'SCHEDULED'
+    makeup?.status === 'SCHEDULED' &&
+    (expectDate ? makeup?.date === expectDate : !!makeup?.date)
   console.log(JSON.stringify({ origin, makeup, ok: !!ok }))
   process.exit(ok ? 0 : 1)
 }

@@ -16,8 +16,25 @@ async function main() {
   }
   log.push(`review-test bookings xóa: ${rvBookings.length}`)
 
-  // 2. Booking E2E của hoa × minhanh (18/10 đơn + series T7 24/10) — mọi trạng thái
-  const e2eDates = ['2026-10-18', '2026-10-24', '2026-10-31', '2026-11-07', '2026-11-14']
+  // 2. Booking E2E của hoa × minhanh (đơn CN + series T7 x4) — mọi trạng thái
+  // Ngày ĐỘNG theo prep (nextSunday/nextSaturday tính lại lúc dọn) + lịch sử cũ để an toàn
+  function nextSaturday(from: Date): Date {
+    const d = new Date(from)
+    const add = (6 - d.getDay() + 7) % 7 || 7
+    d.setDate(d.getDate() + add)
+    return d
+  }
+  function nextSunday(from: Date): Date {
+    const d = new Date(from)
+    const add = (0 - d.getDay() + 7) % 7 || 7
+    d.setDate(d.getDate() + add)
+    return d
+  }
+  const fmtD = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const dynDates: string[] = [fmtD(nextSunday(new Date()))]
+  const satD = nextSaturday(new Date())
+  for (let i = 0; i < 4; i++) { dynDates.push(fmtD(satD)); satD.setDate(satD.getDate() + 7) }
+  const e2eDates = [...new Set([...dynDates, '2026-10-18', '2026-10-24', '2026-10-31', '2026-11-07', '2026-11-14'])]
   const minhanh = await db.user.findUnique({ where: { email: 'minhanh.tutor@example.com' }, select: { id: true } })
   const hoa = await db.user.findUnique({ where: { email: 'hoa.parent@example.com' }, select: { id: true } })
   const testBookings = await db.booking.findMany({
@@ -102,6 +119,16 @@ async function main() {
   // 8. Review E2E của hoa cho sarah (nếu gửi thành công)
   const rv2 = await db.review.deleteMany({ where: { studentId: hoa!.id, comment: { startsWith: 'Cô dạy nhiệt tình' } } })
   log.push(`review E2E xóa: ${rv2.count}`)
+
+  // 9. Tin nhắn E2E trong hội thoại hoa↔minhanh (2 chiều)
+  const msg1 = await db.message.deleteMany({ where: { body: { startsWith: 'Chào cô, cháu xác nhận buổi học sáng' } } })
+  const msg2 = await db.message.deleteMany({ where: { body: { startsWith: 'Cô đã nhận được lịch' } } })
+  log.push(`tin nhắn E2E xóa: ${msg1.count + msg2.count}`)
+
+  // 10. AdminActionLog sinh bởi các run E2E (unlock/verify của e2e.student/thuha/e2e_degree) —
+  // seed không tạo log nào nên xóa hết cho demo sạch + lần chạy sau verify đúng log MỚI
+  const alog = await db.adminActionLog.deleteMany({})
+  log.push(`audit log E2E xóa: ${alog.count}`)
 
   const [users, bookings, cancels, vrc] = await Promise.all([
     db.user.count(),

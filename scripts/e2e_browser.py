@@ -159,6 +159,30 @@ def dialog_has(t):
     return 'true' in (r or '').lower()
 
 
+def dialog_set_times(t0, t1):
+    """Set 2 input[type=time] trong dialog trên cùng qua native setter (HH:MM chuẩn)."""
+    r = ab('eval',
+           "(function(){var ds=document.querySelectorAll('[role=dialog]');var dlg=ds[ds.length-1];"
+           "if(!dlg)return 'NODLG';var ts=dlg.querySelectorAll('input[type=time]');"
+           "if(ts.length<2)return 'NOTIME';"
+           "var set=function(el,v){Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),'value').set.call(el,v);"
+           "el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};"
+           "set(ts[0],'" + t0 + "');set(ts[1],'" + t1 + "');return 'OK'})()")
+    return 'OK' in (r or '')
+
+
+def dialog_click_btn(text, exact=False):
+    """Click nút theo text TRONG dialog trên cùng (deterministic — không lẫn nút trang)."""
+    t = json.dumps(text)
+    cond = f"b.innerText.trim()==={t}" if exact else f"b.innerText.trim().indexOf({t})>=0"
+    r = ab('eval',
+           "(function(){var ds=document.querySelectorAll('[role=dialog]');var d=ds[ds.length-1];"
+           "if(!d)return 'NODLG';var bs=[].slice.call(d.querySelectorAll('button'));"
+           "bs=bs.filter(function(b){return " + cond + "});"
+           "if(!bs.length)return 'NOBTN';bs[bs.length-1].click();return 'OK'})()")
+    return 'OK' in (r or '')
+
+
 def wait_text(t, secs=10):
     for _ in range(int(secs / 0.4)):
         if has_text(t):
@@ -303,12 +327,56 @@ def j1_guest():
     check('filter verified + slot tối ra kết quả', len(find_all(startswith='Lưu ')) >= 1)
     check('thẻ có badge "Đã xác minh"', body_count('/Đã xác minh/g') >= 1)
 
+    # SẸ-XSS: view bản đồ — Leaflet render + click marker → popup thông tin gia sư (HTML đã escape)
+    mv = find('Kèm bản đồ') or find('Kèm bản đồ', role='tab')
+    if mv:
+        ab('click', mv)
+        time.sleep(4)
+        r = ab('eval', "!!document.querySelector('.leaflet-container')")
+        check('map view: Leaflet container render', 'true' in (r or '').lower())
+        # Popup marker: markerClusterGroup NUỘT click khi map còn CỤM → zoom dần cho tan hết
+        # cụm rồi mới click marker đơn (dispatchEvent bubbles — mouse CDP/.click() đều không ăn)
+        for _ in range(6):
+            rz = ab('eval',
+                    "(function(){var cl=[].slice.call(document.querySelectorAll('.leaflet-marker-icon')).filter(function(m){return /custom-cluster/.test(m.className||'')});"
+                    "if(!cl.length) return 'DONE'; cl[0].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window})); return 'Z'})()")
+            if 'DONE' in (rz or ''):
+                break
+            time.sleep(2)
+        time.sleep(3)  # đợi animation zoom cuối + cluster tái bố trí xong hẳn
+        opened = False
+        pop_txt = 'NOPOP'
+        for _ in range(4):  # thử tối đa 4 marker đơn (marker đầu có thể vừa reposition)
+            ab('eval',
+               "(function(){var ms=[].slice.call(document.querySelectorAll('.leaflet-marker-icon')).filter(function(m){return !/custom-cluster/.test(m.className||'')});"
+               "if(!ms.length) return 'NOMARK'; ms[0].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window})); return 'OK'})()")
+            time.sleep(1.6)
+            pop_txt = ab('eval',
+                         "(function(){var p=document.querySelector('.leaflet-popup-content');"
+                         "return p ? p.innerText.trim().slice(0,80) : 'NOPOP'})()") or 'NOPOP'
+            if pop_txt and 'NOPOP' not in pop_txt:
+                opened = True
+                break
+            time.sleep(1)
+        check('map view: popup marker hiện thông tin gia sư', opened, str(pop_txt)[:80])
+        shot('j1-map-popup')
+        gb = find('Dạng lưới') or find('Dạng lưới', role='tab')
+        if gb:
+            ab('click', gb)
+            time.sleep(1.5)
+    else:
+        check('map view: nút chuyển "Kèm bản đồ"', False, 'không tìm thấy nút toggle')
+
     # hồ sơ gia sư công khai
     goto(f"/?view=tutor&id={DATA['users']['minhanhId']}")
     check('hồ sơ: tên Nguyễn Minh Anh', has_text('Nguyễn Minh Anh'))
     check('hồ sơ: badge "Đã xác minh"', has_text('Đã xác minh'))
     check('hồ sơ: nút "Đặt lịch học"', find('Đặt lịch học', role='button') is not None)
     check('hồ sơ: điểm reliability hiển thị', has_text('đáng tin') or has_text('Điểm') or has_text('reliability') or True)  # loose
+    # SẬ-TUT2 (B1) UI: khách ẩn danh KHÔNG thấy địa chỉ nhà — chỉ còn khu vực (quận/thành)
+    addr = (DATA.get('users') or {}).get('minhanhAddress') or ''
+    check('B1-UI: khách KHÔNG thấy địa chỉ nhà trên hồ sơ', not (addr and has_text(addr)), (addr or '?')[:40])
+    check('B1-UI: khu vực công khai vẫn hiện (quận/thành cho bản đồ)', has_text('Cầu Giấy') or has_text('Khu vực'))
     shot('j1-tutor-profile')
 
     # guest bấm đặt lịch → phải được mời đăng nhập
@@ -370,6 +438,26 @@ def j1_guest():
     shot('j1-register-tutor')
     logout()
 
+    # B4-UX: brute-force 1 email → 429 hiển thị thông báo tiếng Việt (bucket IP+email + bucket email thuần)
+    goto('/?view=login')
+    rl_shown = False
+    for i in range(12):
+        f1 = fill_name('Email', 'e2e.rl@example.com')
+        f2 = fill_name('Mật khẩu', 'sai-mat-khau-xyz')
+        if not (f1 and f2):
+            goto('/?view=login')
+            fill_name('Email', 'e2e.rl@example.com')
+            fill_name('Mật khẩu', 'sai-mat-khau-xyz')
+        b = find('Đăng nhập', role='button', exact=True)
+        if b:
+            ab('click', b)
+        time.sleep(1.7)
+        if has_text('quá nhiều lần'):
+            rl_shown = True
+            break
+    check('B4-UX: ~10 lần sai liên tiếp → 429 thông báo tiếng Việt "quá nhiều lần"', rl_shown)
+    shot('j1-rate-limit-429')
+
 
 import urllib.parse  # noqa: E402  (dùng cho unquote ở J1)
 
@@ -385,6 +473,11 @@ def j2_parent():
     check('dashboard: lời chào đúng user', has_text('Phụ huynh Nguyễn Thị Hoa'))
     check('dashboard: buổi sắp tới (series demo 28/10)', wait_text('28/10', 6) or has_text('28/10'))
     check('dashboard: panel học phí', has_text('Học phí') or has_text('học phí'))
+
+    # SẬ-TUT2 (B1) UI positive gate: hoa có booking active với minhanh → CÓ thấy địa chỉ nhà
+    goto(f"/?view=tutor&id={DATA['users']['minhanhId']}")
+    addr = (DATA.get('users') or {}).get('minhanhAddress') or ''
+    check('B1-UI: phụ huynh có booking active → CÓ thấy địa chỉ nhà', bool(addr) and has_text(addr))
 
     # --- Yêu thích (nút icon: title "Lưu vào danh sách yêu thích") ---
     goto(f"/?view=tutor&id={DATA['users']['minhanhId']}")
@@ -422,6 +515,22 @@ def j2_parent():
     check(f"đặt đơn lẻ: booking {d['date']} 08:00 PENDING", any(x.get('status') == 'PENDING' for x in singles), str(len(singles)))
     SINGLE_ID = singles[0]['id'] if singles else None
     shot('j2-single-booked')
+
+    # SẸ-BK1/B11 UX: đặt lại CÙNG slot → bị chặn (không tạo booking thứ 2, có phản hồi lỗi)
+    goto(f"/?view=tutor&id={DATA['users']['minhanhId']}")
+    open_booking_dialog()
+    click_safe('trực tuyến', role='radio')
+    time.sleep(0.5)
+    fill_date_and_slot(d['date'], d['slot'])
+    click_safe('Xác nhận đặt lịch', role='button')
+    time.sleep(2.2)
+    ui_blocked = ('view=dashboard' not in cur_url()) or has_text('khung giờ') or has_text('trùng')
+    st, bl2 = browser_api('GET', '/api/bookings?role=student')
+    allb2 = bl2.get('bookings') or bl2.get('data') or []
+    cnt = [x for x in allb2 if x.get('date') == d['date'] and x.get('startTime', '').startswith('08:00') and x.get('status') in ('PENDING', 'CONFIRMED')]
+    check('chống double-book: đặt lại cùng slot → KHÔNG tạo booking thứ 2', len(cnt) == 1, f'n={len(cnt)}')
+    check('chống double-book: UX hiển thị lỗi / không chuyển hướng thành công', ui_blocked)
+    shot('j2-double-book-blocked')
 
     # --- Khóa định kỳ 4 tuần (T7 24/10 18:00) — mặc định sau khi bật là 4 buổi ---
     goto(f"/?view=tutor&id={DATA['users']['minhanhId']}")
@@ -605,13 +714,27 @@ def j3_tutor():
         allb = bl.get('bookings') or []
         return [x for x in allb if x.get('status') == 'PENDING' and x.get('date') in want]
 
+    # SẸ-BK1: xác nhận ĐÚNG thẻ booking đích (card-level DOM) — dashboard có ~10 thẻ PENDING
+    # của nhiều học sinh, click theo index a11y sẽ trượt/nhầm (run trước chỉ được 2/4)
+    def confirm_card(iso):
+        vi = f"{int(iso[8:10]):02d}/{int(iso[5:7]):02d}/{iso[:4]}"
+        r = ab('eval',
+               "(function(){var vi=" + json.dumps(vi) + ";"
+               "var btns=[].slice.call(document.querySelectorAll('button')).filter(function(b){return b.innerText.trim()==='Xác nhận'});"
+               "for(var i=0;i<btns.length;i++){var el=btns[i],hops=0,card=null;"
+               "while(el&&hops<12){el=el.parentElement;hops++;"
+               "if(el&&/\\d{2}\\/\\d{2}\\/\\d{4}/.test(el.innerText||'')){card=el;break;}}"
+               "if(card&&(card.innerText||'').indexOf(vi)>=0){btns[i].click();return 'OK:'+vi;}}"
+               "return 'NOCARD:'+vi})()")
+        return 'OK:' in (r or ''), (r or '')
+
     guard = 0
-    while tutor_pend() and guard < 12:
-        guard += 1
-        cands = [c for c in find_all('Xác nhận', role='button') if c]
-        if not cands:
+    while guard < 8:
+        pend = tutor_pend()
+        if not pend:
             break
-        ab('click', cands[(guard - 1) % len(cands)])
+        guard += 1
+        confirm_card(pend[0]['date'])
         time.sleep(2.2)
     st, bl = browser_api('GET', '/api/bookings?role=tutor')
     allb = bl.get('bookings') or []
@@ -641,6 +764,7 @@ def j3_tutor():
     mk = DATA.get('makeup')
     if mk:
         mk_date_vi = f"{int(mk['date'][8:10])}/{int(mk['date'][5:7])}"  # 27/10
+        bu_date = mk.get('newDate') or '2026-10-30'  # SẸ-TZ (B3): thứ Sáu kế sau buổi gốc (prep tính)
         click_safe('Lớp Toán 10', role='button')
         time.sleep(1.8)
         click_safe('Buổi học', role='tab')
@@ -673,7 +797,7 @@ def j3_tutor():
             if cb:
                 ab('check', cb)
                 time.sleep(0.8)
-            # set ngày bù 30/10 + giờ 18:00-20:30 (native setter trong dialog trên cùng)
+            # set ngày bù (thứ Sáu kế sau — động) + giờ 18:00-20:30 (native setter trong dialog trên cùng)
             ab('eval',
                "(function(){var ds=document.querySelectorAll('[role=dialog]');"
                "var dlg=ds[ds.length-1];"
@@ -681,21 +805,97 @@ def j3_tutor():
                "el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};"
                "var d=dlg.querySelector('input[type=date]');var ts=dlg.querySelectorAll('input[type=time]');"
                "if(!d||ts.length<2)return 'NO';"
-               "set(d,'2026-10-30');set(ts[0],'18:00');set(ts[1],'20:30');return 'OK'})()")
+               "set(d,'" + bu_date + "');set(ts[0],'18:00');set(ts[1],'20:30');return 'OK'})()")
             click_safe('Xác nhận nghỉ buổi', role='button')
             time.sleep(3)
             vr = subprocess.run(['bun', 'run', 'scripts/e2e_verify_makeup.ts'], cwd='/home/z/my-project', capture_output=True, text=True, timeout=90)
-            check('dạy bù: nghỉ 27/10 → buổi bù 30/10 18:00 qua UI', vr.returncode == 0, (vr.stdout or vr.stderr or '')[:150])
+            check(f'dạy bù: nghỉ {mk_date_vi} → buổi bù {bu_date} 18:00 qua UI', vr.returncode == 0, (vr.stdout or vr.stderr or '')[:150])
             shot('j3-makeup')
         else:
             check('dạy bù: tìm đúng buổi cần nghỉ', False, f'không thấy buổi {mk_date_vi} trong dialog')
     else:
         check('dạy bù: dữ liệu target', False, 'e2e_data thiếu makeup')
 
-    # --- Quý giờ (manage-availability) ---
+    # --- B7-UI: GIỜ TRỐNG 1-1 (UI sống: dialog "Giờ trống nhận lớp 1-1" — grid ô 2h + form tùy chỉnh) ---
+    # (manage-availability-page.tsx cũ là dead code — UI thật nằm trong Lịch dạy)
     goto('/?view=manage-availability')
-    check('quý giờ: trang render bảng tuần', has_text('Thứ') or has_text('Chủ nhật') or has_text('CN'))
+    time.sleep(2)
+    check('quý giờ: trang lịch render (Tuần/Tháng)', has_text('Tuần') or has_text('Tháng'))
+    ab('eval', "window.confirm=function(){return true}; 'ok'")  # auto-accept confirm() khi xóa slot
+
+    def av_slots():
+        _st, av = browser_api('GET', '/api/tutors/me/availability')
+        return av.get('availability') or av.get('slots') or []
+
+    DAY_VI = {'Chủ nhật': 0, 'Thứ 2': 1, 'Thứ 3': 2, 'Thứ 4': 3, 'Thứ 5': 4, 'Thứ 6': 5, 'Thứ 7': 6}
+
+    # mở dialog quản lý: nút "Giờ trống 1-1" (nút CUỐI trùng tên — nút đầu là chip filter)
+    r = ab('eval',
+           "(function(){var bs=[].slice.call(document.querySelectorAll('button')).filter(function(b){return (b.innerText||'').indexOf('Giờ trống 1-1')>=0});"
+           "if(!bs.length) return 'NOBTN'; bs[bs.length-1].click(); return 'OK'})()")
+    time.sleep(1.6)
+    check('B7-UI: dialog "Giờ trống nhận lớp 1-1" mở', 'OK' in r and dialog_has('Giờ trống nhận lớp 1-1'), str(r)[:40])
     shot('j3-availability')
+
+    # (1) THÊM slot qua Ô LƯỚI — ô sáng sớm chưa bật (title "Bấm để thêm Thứ X 06:00")
+    r = ab('eval',
+           "(function(){var cells=[].slice.call(document.querySelectorAll('[role=dialog] button[title^=\"Bấm để thêm\"]'));"
+           "cells=cells.filter(function(c){return / (0[68]|10):00$/.test(c.title)});"
+           "if(!cells.length) return 'NOCELL'; var t=cells[0].title.replace('Bấm để thêm ','');"
+           "cells[0].click(); return t})()")
+    r = (r or '').strip().strip('"')  # agent-browser eval trả JSON-quoted string
+    grid_added = None
+    if r and r not in ('NOCELL', ''):
+        day_vi, gt0 = r.rsplit(' ', 1)
+        gt1 = f"{int(gt0[:2]) + 2:02d}:00"
+        grid_added = (DAY_VI.get(day_vi), gt0, gt1)
+        time.sleep(2)
+        ok_grid = any(s.get('dayOfWeek') == grid_added[0] and (s.get('startTime') or '')[:5] == gt0 for s in av_slots())
+        check(f'B7-UI: bấm ô lưới ({r}) → slot {gt0}-{gt1} lưu vào API', ok_grid)
+        shot('j3-availability-added')
+        # (2) XÓA slot vừa thêm — nút X trên chip (title "Xóa 06:00–08:00", en-dash)
+        if ok_grid:
+            chip = f"{gt0}–{gt1}"
+            r2 = ab('eval',
+                    "(function(){var btns=[].slice.call(document.querySelectorAll('[role=dialog] button')).filter(function(b){return (b.title||'').indexOf(" + json.dumps('Xóa ' + chip) + ")>=0});"
+                    "if(!btns.length) return 'NOX'; btns[btns.length-1].click(); return 'OK'})()")
+            time.sleep(2)
+            gone = not any(s.get('dayOfWeek') == grid_added[0] and (s.get('startTime') or '')[:5] == gt0 for s in av_slots())
+            check(f'B7-UI: xóa chip {chip} → biến mất khỏi API', gone, str(r2)[:40])
+            shot('j3-availability-deleted')
+    else:
+        check('B7-UI: có ô lưới trống (sáng) để test', False, str(r)[:40])
+
+    # (3) FORM TÙY CHỈNH: end < start → chặn tiếng Việt; hợp lệ → thêm + xóa
+    if dialog_click_btn('Khung giờ tùy chỉnh'):
+        time.sleep(1.3)
+        check('B7-UI: form "Thêm khung giờ tùy chỉnh" mở', dialog_has('Thêm khung giờ tùy chỉnh'))
+        dialog_set_times('14:00', '13:00')
+        dialog_click_btn('Thêm khung giờ')
+        time.sleep(1.3)
+        check('B7-UI: chặn end < start ("Giờ bắt đầu phải trước giờ kết thúc")', has_text('Giờ bắt đầu phải trước giờ kết thúc'))
+        # khung hợp lệ: T7 14:00-15:30 (không đụng slot 18:00-21:00 sẵn có)
+        ab('eval',
+           "(function(){var ds=document.querySelectorAll('[role=dialog]');var d=ds[ds.length-1];"
+           "var sel=d.querySelector('select'); if(!sel) return 'NOSEL';"
+           "sel.value='6'; sel.dispatchEvent(new Event('change',{bubbles:true})); return 'OK'})()")
+        dialog_set_times('14:00', '15:30')
+        dialog_click_btn('Thêm khung giờ')
+        time.sleep(2.2)
+        ok_c = any(s.get('dayOfWeek') == 6 and (s.get('startTime') or '')[:5] == '14:00' and (s.get('endTime') or '')[:5] == '15:30' for s in av_slots())
+        check('B7-UI: form tùy chỉnh thêm T7 14:00-15:30 → lưu API', ok_c)
+        shot('j3-availability-custom')
+        if ok_c:
+            r3 = ab('eval',
+                    "(function(){var btns=[].slice.call(document.querySelectorAll('[role=dialog] button')).filter(function(b){return (b.title||'').indexOf(" + json.dumps('Xóa 14:00–15:30') + ")>=0});"
+                    "if(!btns.length) return 'NOX'; btns[btns.length-1].click(); return 'OK'})()")
+            time.sleep(2)
+            check('B7-UI: xóa khung tùy chỉnh → sạch API',
+                  not any(s.get('dayOfWeek') == 6 and (s.get('startTime') or '')[:5] == '14:00' for s in av_slots()), str(r3)[:40])
+        dialog_click_btn('Đóng')
+        time.sleep(0.8)
+    dialog_click_btn('Xong')
+    time.sleep(0.6)
 
     # --- Xác minh: upload bằng cấp mới ---
     goto('/?view=dashboard&tab=verification')
@@ -876,7 +1076,21 @@ def j4_admin():
     st3, out3 = api('POST', '/api/auth/login', {'email': 'e2e.student@example.com', 'password': '123456'})
     check('mở khóa qua UI → login lại được', st3 == 200 and out3.get('email') == 'e2e.student@example.com', f'st={st3}')
     shot('j4-locked-unlock')
+
+    # SẸ-LOG (B13): unlock qua UI → AdminActionLog ghi đúng hành động + đối tượng
+    st, lg = browser_api('GET', '/api/admin/logs')
+    lgtxt = json.dumps(lg, ensure_ascii=False)
+    check('B13: unlock ghi audit log (UNLOCK_ACCOUNT + đúng đối tượng)',
+          st == 200 and 'UNLOCK_ACCOUNT' in lgtxt and ('e2e.student' in lgtxt or 'E2E Ph' in lgtxt), f'st={st}')
     logout()
+
+    # B13: người thường không đọc được nhật ký quản trị
+    if login('e2e.student@example.com', '123456') or get_session():
+        st403, _ = browser_api('GET', '/api/admin/logs')
+        check('B13: học sinh GET /api/admin/logs → 403', st403 == 403, f'st={st403}')
+        logout()
+    else:
+        check('B13: login e2e.student (kiểm tra 403)', False, 'login fail')
 
 
 # ============================================================
@@ -893,6 +1107,14 @@ def j5_cross():
     goto('/?view=search&q=Toán')
     check('mobile: search render kết quả', len(find_all(startswith='Lưu ')) >= 1)
     shot('j5-mobile-search')
+
+    # tablet 768px — lớp responsive trung gian
+    ab('set', 'viewport', '768', '1024')
+    goto('/')
+    check('tablet 768px: landing render', 'GiaSuConnect' in ab('get', 'title'))
+    goto('/?view=search&q=Toán')
+    check('tablet 768px: search render kết quả', len(find_all(startswith='Lưu ')) >= 1)
+    shot('j5-tablet-search')
     ab('set', 'viewport', '1920', '1080')
 
     # hydration/console errors tích lũy — tách noise dev-mode (SPA view-param) đã biết
@@ -910,8 +1132,12 @@ def j5_cross():
 
 def main():
     frm = 'J1'
+    only = None
     if '--from' in sys.argv:
         frm = sys.argv[sys.argv.index('--from') + 1]
+    if '--only' in sys.argv:
+        only = sys.argv[sys.argv.index('--only') + 1]
+        frm = only
     order = [('J1', j1_guest), ('J2', j2_parent), ('J3', j3_tutor), ('J4', j4_admin), ('J5', j5_cross)]
     started = False
     t0 = time.time()
@@ -934,8 +1160,10 @@ def main():
         print('\nCác FAIL:')
         for f in FAILURES:
             print(' -', f)
-    json.dump({'pass': PASS, 'fail': FAIL, 'failures': FAILURES, 'secs': int(dt)},
-              open('/home/z/my-project/scripts/logs/e2e_result.json', 'w'), ensure_ascii=False, indent=1)
+    tag = only or ('from_' + frm)
+    res = {'pass': PASS, 'fail': FAIL, 'failures': FAILURES, 'secs': int(dt), 'tag': tag}
+    json.dump(res, open('/home/z/my-project/scripts/logs/e2e_result.json', 'w'), ensure_ascii=False, indent=1)
+    json.dump(res, open(f'/home/z/my-project/scripts/logs/e2e_result_{tag}.json', 'w'), ensure_ascii=False, indent=1)
     return 1 if FAIL else 0
 
 
