@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { computeReliability } from '@/lib/reliability'
+import { vnTodayISO } from '@/lib/vn-time'
 
 export async function GET(
   _req: NextRequest,
@@ -73,8 +74,7 @@ export async function GET(
   // Lịch bận theo NGÀY CỤ THỂ trong 8 tuần tới (PENDING/CONFIRMED):
   // để dialog đặt lịch vô hiệu hóa đúng giờ đã có người đặt trên nền tảng
   // (lớp học cố định theo tuần được trả riêng qua /api/classes).
-  const today = new Date()
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
   const busySlots = await db.booking.findMany({
     where: {
       tutorId: id,

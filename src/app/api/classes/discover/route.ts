@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { vnTodayISO } from '@/lib/vn-time'
 
 export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
@@ -63,8 +64,7 @@ export async function GET(req: NextRequest) {
   }]))
 
   // Buổi học tương lai gần nhất của từng lớp
-  const today = new Date()
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
   const classIds = classes.map(c => c.id)
   const upcomingSessions = classIds.length
     ? await db.classSession.findMany({

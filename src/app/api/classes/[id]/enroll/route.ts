@@ -12,6 +12,7 @@ import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { notifyTutorNewEnrollment, notifyTutorNewWaitlist } from '@/lib/notify'
 import { formatClassSchedule, CLASS_DAY_NAMES } from '@/lib/format'
+import { vnTodayISO, vnDayOfWeek, addDaysISO as addDaysISOVi } from '@/lib/vn-time'
 
 const enrollSchema = z.object({
   studentName: z.string().trim().max(80).optional().nullable(),
@@ -20,15 +21,13 @@ const enrollSchema = z.object({
   force: z.boolean().optional(),
 })
 
+// SẸ-TZ (B3): hôm nay / cộng ngày đều theo giờ VN — không phụ thuộc TZ server
 function todayISO(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return vnTodayISO()
 }
 
 function addDaysISO(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00`)
-  d.setDate(d.getDate() + days)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return addDaysISOVi(iso, days)
 }
 
 /**
@@ -83,7 +82,7 @@ async function findStudentScheduleConflicts(
     include: { subject: { select: { name: true } }, tutor: { select: { name: true } } },
   })
   for (const b of bookings) {
-    const dow = new Date(`${b.date}T00:00:00`).getDay()
+    const dow = vnDayOfWeek(b.date) // SẸ-TZ (B3)
     for (const ns of slots) {
       if (ns.dayOfWeek === dow && ns.startTime < b.endTime && b.startTime < ns.endTime) {
         conflicts.push(
@@ -150,8 +149,7 @@ export async function POST(
 
   // HẠN ĐĂNG KÝ: quá hạn thì không nhận đăng ký mới (kể cả danh sách chờ)
   if (cls.enrollDeadline) {
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const todayStr = todayISO() // SẸ-TZ (B3): theo giờ VN
     if (cls.enrollDeadline < todayStr) {
       return NextResponse.json(
         { error: `Đã hết hạn đăng ký lớp này (hạn chót ${cls.enrollDeadline}) — vui lòng tìm lớp khác hoặc liên hệ gia sư` },

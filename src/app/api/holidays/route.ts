@@ -14,6 +14,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { cancelSessionsOnHoliday } from '@/lib/class-sessions'
 import { notifyStudentsHolidayCancelled } from '@/lib/notify'
 import { formatDate } from '@/lib/format'
+import { vnTodayISO } from '@/lib/vn-time'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -22,9 +23,9 @@ const postSchema = z.object({
   name: z.string().trim().min(2, 'Tên ngày lễ tối thiểu 2 ký tự').max(60),
 })
 
+// SẸ-TZ (B3): hôm nay theo giờ VN
 function todayISO(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return vnTodayISO()
 }
 
 export async function GET(_req: NextRequest) {

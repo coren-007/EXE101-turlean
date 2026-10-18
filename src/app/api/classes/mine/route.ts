@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { ensureRollingSessions } from '@/lib/class-sessions'
+import { vnTodayISO, vnCurrentPeriod } from '@/lib/vn-time'
 
 export async function GET(_req: NextRequest) {
   const user = await getCurrentUser()
@@ -43,8 +44,7 @@ export async function GET(_req: NextRequest) {
   // Refetch sau khi có thể gia hạn (hiếm khi xảy ra — chỉ khi lớp cũ lâu không mở)
   let fresh = classes
   const extendedAny = classes.some(c => {
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
     return c.status !== 'CLOSED' && c.sessions.filter(s => s.status === 'SCHEDULED' && s.date >= todayStr).length < 4
   })
   if (extendedAny) {
@@ -71,9 +71,8 @@ export async function GET(_req: NextRequest) {
     })
   }
 
-  const today = new Date()
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  const currentPeriod = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
+  const currentPeriod = vnCurrentPeriod()
 
   return NextResponse.json({
     classes: (fresh ?? classes).map(c => {

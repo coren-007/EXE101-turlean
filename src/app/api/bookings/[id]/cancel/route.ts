@@ -8,14 +8,16 @@ import { getCurrentUser } from '@/lib/auth'
 import { classifyCancellation, applyAutoLockIfNeeded } from '@/lib/reliability'
 import { notifyCancellation } from '@/lib/notify'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { vnEpoch } from '@/lib/vn-time'
 
 const cancelSchema = z.object({
   reason: z.string().trim().min(5, 'Lý do hủy phải có ít nhất 5 ký tự'),
 })
 
+// SẸ-TZ (B3): epoch theo giờ VN — không lệch theo TZ server (đã từng làm
+// cổng "trước 24h" trễ 7 tiếng khi deploy host UTC)
 function hoursUntil(date: string, startTime: string): number {
-  const classStart = new Date(`${date}T${startTime}`)
-  return (classStart.getTime() - Date.now()) / (1000 * 60 * 60)
+  return (vnEpoch(date, startTime) - Date.now()) / (1000 * 60 * 60)
 }
 
 export async function POST(

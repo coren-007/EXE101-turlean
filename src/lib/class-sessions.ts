@@ -18,26 +18,17 @@ import { CLASS_DAY_NAMES } from './format'
 export const SESSIONS_WEEKS_AHEAD = 12 // sinh trước 12 tuần
 export const SESSIONS_MIN_FUTURE = 4 // khi còn < 4 buổi tương lai → tự gia hạn
 
-// ===== Date helpers (YYYY-MM-DD, local time — đồng nhất toàn app) =====
+// ===== Date helpers (YYYY-MM-DD — đồng nhất toàn app, theo GIỜ VIỆT NAM) =====
+// SẸ-TZ (B3): toàn bộ helper chuyển sang src/lib/vn-time.ts (epoch +07:00
+// tường minh, toán ngày thuần chuỗi) — không còn phụ thuộc TZ server.
+// Giữ tên export cũ `todayISO` để các file đang import không đổi.
+
+import { vnTodayISO, vnDayOfWeek, addDaysISO } from '@/lib/vn-time'
 
 export function todayISO(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return vnTodayISO()
 }
-
-function fromISO(iso: string): Date {
-  return new Date(`${iso}T00:00:00`)
-}
-
-function toISO(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-export function addDaysISO(iso: string, days: number): string {
-  const d = fromISO(iso)
-  d.setDate(d.getDate() + days)
-  return toISO(d)
-}
+export { addDaysISO }
 
 function maxISO(a: string, b: string): string {
   return a >= b ? a : b
@@ -109,8 +100,7 @@ export interface PromotedEnrollment {
 
 /** Ngày occurrence đầu tiên của `dayOfWeek` tính từ `fromISODate` (bao gồm chính ngày đó) */
 export function nextOccurrence(fromISODate: string, dayOfWeek: number): string {
-  const d = fromISO(fromISODate)
-  const diff = (dayOfWeek - d.getDay() + 7) % 7
+  const diff = (dayOfWeek - vnDayOfWeek(fromISODate) + 7) % 7 // SẸ-TZ (B3): thứ theo ngày VN
   return addDaysISO(fromISODate, diff)
 }
 
@@ -267,7 +257,7 @@ export async function checkClassSlotConflicts(
     include: { student: { select: { name: true } }, subject: { select: { name: true } } },
   })
   for (const b of bookings) {
-    const dow = fromISO(b.date).getDay()
+    const dow = vnDayOfWeek(b.date) // SẸ-TZ (B3)
     for (const ns of slots) {
       if (ns.dayOfWeek === dow && ns.startTime < b.endTime && b.startTime < ns.endTime) {
         errors.push(

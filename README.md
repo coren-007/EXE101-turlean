@@ -248,6 +248,7 @@ Tự động chạy khi push/PR lên `main` hoặc `staging` (Bun):
 1. Import repo trên https://vercel.com (Bun được cấu hình sẵn trong `vercel.json`)
 2. Set env vars: `DATABASE_URL` (pooled) + `DIRECT_URL` (direct) = Supabase connection strings
 3. Auto-deploy khi push `main`
+4. **Set thêm env var `TZ=Asia/Ho_Chi_Minh`** (Project Settings → Environment Variables) — Vercel mặc định chạy UTC. Từ audit SẸ-TZ, logic nghiệp vụ (cổng hủy 24h, điểm danh, dời buổi…) đã parse `+07:00` tường minh qua `src/lib/vn-time.ts` nên không bắt buộc, nhưng set TZ giúp log và đầu ra định dạng đồng bộ giờ Việt Nam.
 
 Xem hướng dẫn chi tiết: **[DEPLOYMENT.md](./DEPLOYMENT.md)**
 

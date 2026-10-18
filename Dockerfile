@@ -46,6 +46,10 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# SẸ-TZ (B3): giờ Việt Nam cho log/định dạng hiển thị. Logic nghiệp vụ đã
+# parse +07:00 tường minh qua src/lib/vn-time.ts nên KHÔNG phụ thuộc biến này,
+# nhưng set để đồng bộ toàn bộ output của tiến trình.
+ENV TZ=Asia/Ho_Chi_Minh
 
 # Install curl for health check
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*

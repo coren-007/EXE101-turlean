@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { vnTodayISO, vnCurrentPeriod, vnMonthOf } from '@/lib/vn-time'
 
 export async function GET(_req: NextRequest) {
   const user = await getCurrentUser()
@@ -41,9 +42,8 @@ export async function GET(_req: NextRequest) {
     orderBy: { updatedAt: 'desc' },
   })
 
-  const today = new Date()
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  const currentPeriod = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
+  const currentPeriod = vnCurrentPeriod()
 
   return NextResponse.json({
     enrollments: enrollments.map(e => {
@@ -92,8 +92,9 @@ export async function GET(_req: NextRequest) {
       const paidPeriods = new Set(myPayments.map(p => p.period))
       const unpaidPeriods: string[] = []
       if (e.status === 'APPROVED') {
-        const start = e.createdAt
-        let [y, m] = [start.getFullYear(), start.getMonth() + 1]
+        // SẸ-TZ (B3): tháng vào lớp quy về giờ VN
+        const [y0, m0] = vnMonthOf(e.createdAt).split('-').map(Number)
+        let [y, m] = [y0, m0]
         const [ny, nm] = currentPeriod.split('-').map(Number)
         while (y < ny || (y === ny && m <= nm)) {
           const per = `${y}-${String(m).padStart(2, '0')}`

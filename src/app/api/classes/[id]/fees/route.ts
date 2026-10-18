@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { notifyStudentFeeRecorded } from '@/lib/notify'
+import { vnCurrentPeriod, vnMonthOf } from '@/lib/vn-time'
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 
@@ -38,10 +39,9 @@ async function loadOwnedClass(id: string, tutorId: string) {
   return { cls }
 }
 
-// Tháng "YYYY-MM" hiện tại (local)
+// Tháng "YYYY-MM" hiện tại — theo giờ VN (SẸ-TZ B3)
 function currentPeriod(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  return vnCurrentPeriod()
 }
 
 // Danh sách tháng tính học phí: từ tháng bắt đầu (muộn nhất giữa khai giảng,
@@ -58,9 +58,7 @@ function feeMonths(cls: {
     .filter(e => e.status === 'APPROVED')
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0]
   if (firstApproved) {
-    candidates.push(
-      `${firstApproved.createdAt.getFullYear()}-${String(firstApproved.createdAt.getMonth() + 1).padStart(2, '0')}`,
-    )
+    candidates.push(vnMonthOf(firstApproved.createdAt))
   }
   if (candidates.length === 0) return []
   const start = candidates.reduce((a, b) => (a > b ? a : b)) // muộn nhất

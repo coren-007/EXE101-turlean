@@ -15,6 +15,7 @@ import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { ensureRollingSessions } from '@/lib/class-sessions'
 import { formatDate } from '@/lib/format'
+import { vnEpoch } from '@/lib/vn-time'
 
 const attendanceSchema = z.object({
   attendance: z
@@ -70,8 +71,8 @@ export async function POST(
   }
 
   // Chỉ điểm danh SAU giờ bắt đầu (trừ khi sửa lại buổi đã hoàn thành)
-  const startAt = new Date(`${session.date}T${session.startTime}`)
-  if (session.status === 'SCHEDULED' && startAt.getTime() > Date.now()) {
+  // SẸ-TZ (B3): epoch theo giờ VN
+  if (session.status === 'SCHEDULED' && vnEpoch(session.date, session.startTime) > Date.now()) {
     return NextResponse.json(
       { error: `Chưa tới giờ — chỉ điểm danh được sau khi buổi đã bắt đầu (${formatDate(session.date)} ${session.startTime})` },
       { status: 400 },

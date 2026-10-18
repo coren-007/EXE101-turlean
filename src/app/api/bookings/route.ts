@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { notifyTutorNewBooking, notifyStudentConfirmed, notifyStudentCompleted } from '@/lib/notify'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { vnEpoch, vnDayOfWeek, addWeeksISO } from '@/lib/vn-time'
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -76,13 +77,9 @@ function toMinutes(t: string): number {
 }
 
 // Cộng n tuần vào chuỗi ngày YYYY-MM-DD (giữ nguyên thứ trong tuần)
+// SẸ-TZ (B3): toán thuần theo ngày VN — không phụ thuộc TZ server
 function addWeeks(dateStr: string, weeks: number): string {
-  const d = new Date(`${dateStr}T00:00`)
-  d.setDate(d.getDate() + weeks * 7)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return addWeeksISO(dateStr, weeks)
 }
 
 // "20/10/2026" từ chuỗi YYYY-MM-DD (tách chuỗi trực tiếp — tránh lệch múi giờ của new Date(iso))
@@ -136,8 +133,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Không cho đặt lịch trong quá khứ (cho phép hôm nay nếu giờ còn tới)
-  const classStart = new Date(`${date}T${startTime}`)
-  if (classStart.getTime() < Date.now()) {
+  // SẸ-TZ (B3): epoch theo giờ VN (+07:00) — không lệch theo TZ server
+  if (vnEpoch(date, startTime) < Date.now()) {
     return NextResponse.json({ error: 'Không thể đặt lịch cho thời gian đã qua' }, { status: 400 })
   }
 
@@ -170,7 +167,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate time is within tutor's availability
-  const dayOfWeek = new Date(`${date}T00:00`).getDay()
+  // SẸ-TZ (B3): thứ trong tuần tính theo ngày VN (chuỗi), không theo TZ server
+  const dayOfWeek = vnDayOfWeek(date)
   const availabilities = await db.availability.findMany({
     where: { tutorId, dayOfWeek },
   })
@@ -207,7 +205,7 @@ export async function POST(req: NextRequest) {
     // CLOSED mới kết thúc. Kiểm tra CẢ: (a) mẫu lịch tuần (slot) và (b) buổi ClassSession
     // thực tế đã DỜI khỏi mẫu tuần (dạy bù) — đảm bảo không bao giờ chồng chéo sau khi dời buổi.
     const classConflictFor = async (d: string) => {
-      const dow = new Date(`${d}T00:00`).getDay()
+      const dow = vnDayOfWeek(d) // SẸ-TZ (B3)
       const slots = await tx.classScheduleSlot.findMany({
         where: {
           dayOfWeek: dow,
@@ -415,9 +413,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   // P0-2: COMPLETED chỉ được đánh dấu SAU giờ bắt đầu buổi học (trước đây logic đảo ngược)
+  // SẸ-TZ (B3): so sánh theo epoch giờ VN
   if (status === 'COMPLETED') {
-    const classStart = new Date(`${booking.date}T${booking.startTime}`)
-    if (classStart.getTime() > Date.now()) {
+    if (vnEpoch(booking.date, booking.startTime) > Date.now()) {
       return NextResponse.json(
         { error: 'Chưa đến giờ dạy. Chỉ đánh dấu hoàn thành sau khi buổi học đã bắt đầu.' },
         { status: 400 },
@@ -427,8 +425,7 @@ export async function PATCH(req: NextRequest) {
 
   // CONFIRM chỉ hợp lệ khi chưa đến giờ học
   if (status === 'CONFIRMED') {
-    const classStart = new Date(`${booking.date}T${booking.startTime}`)
-    if (classStart.getTime() < Date.now()) {
+    if (vnEpoch(booking.date, booking.startTime) < Date.now()) {
       return NextResponse.json({ error: 'Không thể xác nhận buổi học đã qua giờ học' }, { status: 400 })
     }
   }

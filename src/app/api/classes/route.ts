@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { checkClassSlotConflicts, generateSessionsForClass } from '@/lib/class-sessions'
+import { vnTodayISO } from '@/lib/vn-time'
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -71,8 +72,7 @@ export async function GET(req: NextRequest) {
 
   // Buổi học SẮP DIỄN RA của từng lớp (hiển thị "buổi tới" + tổng buổi tương lai)
   const classIds = classes.map(c => c.id)
-  const today = new Date()
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
   const upcomingSessions = classIds.length
     ? await db.classSession.findMany({
         where: { classId: { in: classIds }, status: 'SCHEDULED', date: { gte: todayStr } },
@@ -166,8 +166,7 @@ export async function POST(req: NextRequest) {
 
   // Hạn đăng ký phải từ hôm nay trở đi (đặt hạn trong quá khứ vô nghĩa khi mở lớp)
   if (enrollDeadline) {
-    const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const todayStr = vnTodayISO() // SẸ-TZ (B3): theo giờ VN
     if (enrollDeadline < todayStr) {
       return NextResponse.json(
         { error: 'Hạn đăng ký không được trước hôm nay' },

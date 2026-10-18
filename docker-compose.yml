@@ -36,6 +36,9 @@ services:
       DIRECT_URL: postgresql://giasuconnect:giasuconnect@db:5432/giasuconnect
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: '1'
+      # SẸ-TZ (B3): đồng bộ múi giờ tiến trình với giờ VN (logic nghiệp vụ đã
+      # parse +07:00 tường minh trong src/lib/vn-time.ts — đây chỉ là hiển thị/log)
+      TZ: Asia/Ho_Chi_Minh
       # - CRON_SECRET=${CRON_SECRET}
     depends_on:
       db:

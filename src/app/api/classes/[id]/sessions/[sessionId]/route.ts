@@ -14,6 +14,7 @@ import {
   notifyStudentsSessionRescheduled, notifyStudentsSessionCancelled, notifyStudentsMakeupScheduled,
 } from '@/lib/notify'
 import { formatDate } from '@/lib/format'
+import { vnEpoch } from '@/lib/vn-time'
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -101,7 +102,8 @@ export async function PATCH(
       if (mu.date === session.date && mu.startTime === session.startTime) {
         return NextResponse.json({ error: 'Buổi dạy bù trùng đúng buổi đang nghỉ — chọn ngày/giờ khác' }, { status: 400 })
       }
-      if (new Date(`${mu.date}T${mu.startTime}`).getTime() < Date.now()) {
+      // SẸ-TZ (B3): epoch theo giờ VN — không cho xếp bù vào quá khứ theo giờ VN
+      if (vnEpoch(mu.date, mu.startTime) < Date.now()) {
         return NextResponse.json({ error: 'Không thể xếp buổi bù vào thời gian đã qua' }, { status: 400 })
       }
       // Trùng buổi khác? (exclude buổi gốc — nó sắp bị hủy)
@@ -177,8 +179,8 @@ export async function PATCH(
     return NextResponse.json({ error: 'Bạn chưa thay đổi ngày hoặc giờ nào' }, { status: 400 })
   }
   // Chỉ dời tới tương lai (cho phép hôm nay nếu giờ còn tới)
-  const newStartAt = new Date(`${newDate}T${newStart}`)
-  if (newStartAt.getTime() < Date.now()) {
+  // SẸ-TZ (B3): epoch theo giờ VN
+  if (vnEpoch(newDate, newStart) < Date.now()) {
     return NextResponse.json({ error: 'Không thể dời buổi về thời gian đã qua' }, { status: 400 })
   }
 
