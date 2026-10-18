@@ -130,6 +130,64 @@ async function main() {
   const alog = await db.adminActionLog.deleteMany({})
   log.push(`audit log E2E xóa: ${alog.count}`)
 
+  // 11. Cancellation do CÁC SUITE TEST API tạo cho user demo (test_booking/phase/repeatweeks
+  //     hủy booking thật của minhanh/hoa/hoanglong... mỗi lần chạy) — mỗi lần -10 điểm
+  //     reliability, tích lũy làm user demo bị TỰ KHÓA (điểm < 30) giữa chừng các đợt
+  //     regression sau. Seed KHÔNG tạo cancellation nào (khảo sát 81 rows đều sinh trong
+  //     ngày test) nên dọn sạch own-cancellation của user demo là an toàn.
+  const DEMO_EMAILS = [
+    'minhanh.tutor@example.com', 'hoa.parent@example.com', 'hoanglong.tutor@example.com',
+    'hongnhung.tutor@example.com', 'minhtam.parent@example.com', 'thanhhha.parent@example.com',
+    'sarah.tutor@example.com', 'thuha.tutor@example.com',
+  ]
+  const demoUsers = await db.user.findMany({ where: { email: { in: DEMO_EMAILS } }, select: { id: true, email: true } })
+  let cancelCleaned = 0
+  for (const du of demoUsers) {
+    const rows = await db.cancellation.findMany({
+      where: { booking: { OR: [{ tutorId: du.id }, { studentId: du.id }] } },
+      select: { id: true, cancelledBy: true, booking: { select: { tutorId: true, studentId: true } } },
+    })
+    const own = rows.filter(r => (r.cancelledBy === 'TUTOR' ? r.booking.tutorId : r.booking.studentId) === du.id)
+    if (own.length) {
+      await db.cancellation.deleteMany({ where: { id: { in: own.map(r => r.id) } } })
+      cancelCleaned += own.length
+    }
+  }
+  if (cancelCleaned) log.push(`cancellation test-suite dọn (chống tự khóa reliability): ${cancelCleaned}`)
+
+  // 12. User throwaway do CÁC SUITE TEST API tạo nhưng không tự dọn (repeat.*,
+  //     booking.test*, secfix.*) — booking sót lại chiếm slot làm browser E2E
+  //     đặt khóa định kỳ 4 buổi chỉ tạo được 2/4 (conflict slot). Dọn theo prefix email.
+  const TEST_PREFIXES = ['repeat.', 'booking.test', 'secfix.', 'e2e-ui.', 'race.', 'mkc2.']
+  const leftovers = await db.user.findMany({
+    where: { email: { startsWith: TEST_PREFIXES[0] } },
+    select: { id: true },
+  })
+  // Prisma không hỗ trợ OR-startsWith trực tiếp trong findMany where email — dò từng prefix
+  for (const p of TEST_PREFIXES.slice(1)) {
+    const more = await db.user.findMany({ where: { email: { startsWith: p } }, select: { id: true } })
+    leftovers.push(...more)
+  }
+  let userCleaned = 0
+  for (const u of leftovers) {
+    await db.review.deleteMany({ where: { OR: [{ tutorId: u.id }, { studentId: u.id }] } })
+    await db.cancellation.deleteMany({ where: { booking: { OR: [{ tutorId: u.id }, { studentId: u.id }] } } })
+    await db.booking.deleteMany({ where: { OR: [{ tutorId: u.id }, { studentId: u.id }] } })
+    await db.favorite.deleteMany({ where: { OR: [{ userId: u.id }, { tutorId: u.id }] } })
+    await db.classEnrollment.deleteMany({ where: { studentParentId: u.id } })
+    await db.classFeePayment.deleteMany({ where: { enrollment: { studentParentId: u.id } } })
+    await db.verificationRequest.deleteMany({ where: { tutorId: u.id } })
+    const convs = await db.conversation.findMany({ where: { OR: [{ tutorId: u.id }, { studentId: u.id }] }, select: { id: true } })
+    for (const c of convs) {
+      await db.message.deleteMany({ where: { conversationId: c.id } })
+      await db.conversation.delete({ where: { id: c.id } })
+    }
+    await db.session.deleteMany({ where: { userId: u.id } })
+    await db.user.delete({ where: { id: u.id } }).catch(() => {})
+    userCleaned++
+  }
+  if (userCleaned) log.push(`user throwaway suite-test dọn: ${userCleaned}`)
+
   const [users, bookings, cancels, vrc] = await Promise.all([
     db.user.count(),
     db.booking.count(),

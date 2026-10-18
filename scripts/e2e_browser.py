@@ -600,23 +600,31 @@ def j2_parent():
     check('review: gửi qua UI → hiển thị trên hồ sơ công khai', ok_review)
     shot('j2-review')
 
-    # --- Nhắn tin ---
-    goto('/?view=messages')
-    conv = find('Nguyễn Minh Anh', role='button') or find('Nguyễn Minh Anh', role='link') or find('Nguyễn Minh Anh')
-    if conv:
+    # --- Nhắn tin (retry 3 lần — hội thoại/textbox có thể hydrate chậm, run
+    #     18/10 bị fail 1 lần do timing: fill+Gửi trượt, tin không bao giờ tới DB) ---
+    msg_ok = False
+    for attempt in range(3):
+        goto('/?view=messages')
+        time.sleep(1 + attempt)
+        conv = find('Nguyễn Minh Anh', role='button') or find('Nguyễn Minh Anh', role='link') or find('Nguyễn Minh Anh')
+        if not conv:
+            continue
         ab('click', conv)
-        time.sleep(1.2)
+        time.sleep(1.8)
         ta = find(role='textbox')
-        if ta:
-            fill(ta, 'Chào cô, cháu xác nhận buổi học sáng Chủ nhật 18/10 lúc 8h ạ')
-            sb = find('Gửi', role='button')
-            if sb:
-                ab('click', sb)
-                time.sleep(1.5)
-        check('tin nhắn: gửi hiển thị trong hội thoại', has_text('buổi học sáng Chủ nhật 18/10'))
-        shot('j2-messages')
-    else:
-        check('tin nhắn: hội thoại với minhanh', False, 'không thấy hội thoại')
+        if not ta:
+            continue
+        fill(ta, 'Chào cô, cháu xác nhận buổi học sáng Chủ nhật 18/10 lúc 8h ạ')
+        sb = find('Gửi', role='button')
+        if not sb:
+            continue
+        ab('click', sb)
+        time.sleep(2)
+        if has_text('buổi học sáng Chủ nhật 18/10'):
+            msg_ok = True
+            break
+    check('tin nhắn: gửi hiển thị trong hội thoại', msg_ok, f'sau {attempt + 1} lần thử')
+    shot('j2-messages')
 
     logout()
     return {'SINGLE_ID': SINGLE_ID, 'SERIES_ID': SERIES_ID}
@@ -970,7 +978,17 @@ def j4_admin():
     tot = stats.get('totals') or stats
     n_users = (tot.get('tutors') or 0) + (tot.get('students') or 0)
     check('admin stats API: tutors+students ≥ 39', n_users >= 39, str(tot)[:120])
-    check('watchlist: hoanglong 70 điểm', has_text('hoanglong') or has_text('Hoàng Long'))
+    # Watchlist deterministic: section render + đúng người điểm thấp nhất theo API
+    # (check cũ "hoanglong 70 điểm" phụ thuộc điểm bẩn tích lũy từ suite API —
+    #  sau khi e2e_cleanup dọn cancellation, mọi user demo về 100 và tên có thể
+    #  không còn trong top-10 điểm thấp nhất)
+    wl = (stats.get('watchlist') or [])[:3]
+    wl_names = [w.get('name') or '' for w in wl]
+    check('watchlist: section "10 gia sư điểm thấp nhất" render',
+          has_text('Danh sách 10 gia sư có điểm thấp nhất'))
+    check('watchlist: hiển thị đúng người điểm thấp nhất (đối chiếu API top-3)',
+          any(n and has_text(n) for n in wl_names),
+          f'API top-3: {wl_names}')
     shot('j4-admin-overview')
 
     # --- Duyệt xác minh (nút theo index — thứ tự card = thứ tự API) ---
