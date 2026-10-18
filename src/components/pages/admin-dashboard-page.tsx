@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   ShieldCheck, FileCheck2, LockOpen, Users, GraduationCap, BookOpen,
   Star, School, AlertTriangle, FileText, ImageIcon, CheckCircle2, XCircle,
-  Clock3, Loader2, BadgeCheck, Ban, ExternalLink, Wallet, CalendarOff
+  Clock3, Loader2, BadgeCheck, Ban, ExternalLink, Wallet, CalendarOff, Lock, ScanSearch
 } from 'lucide-react'
 import { formatVnd, formatDate, timeAgo } from '@/lib/format'
 import { toast } from 'sonner'
@@ -127,6 +127,11 @@ export function AdminDashboardPage() {
   const [reviewNote, setReviewNote] = useState('')
   // Dialog mở khóa
   const [unlockTarget, setUnlockTarget] = useState<LockedUser | null>(null)
+  // Dialog khóa tay (watchlist — gia sư chưa chạm ngưỡng tự khóa nhưng có hành vi xấu)
+  const [lockTarget, setLockTarget] = useState<StatsData['watchlist'][number] | null>(null)
+  const [lockReason, setLockReason] = useState('')
+  // Rà soát tự khóa toàn hệ thống (bất biến: điểm < 30 ⇒ khóa)
+  const [sweeping, setSweeping] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -192,6 +197,59 @@ export function AdminDashboardPage() {
       toast.error('Lỗi kết nối')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const submitLock = async () => {
+    if (!lockTarget) return
+    if (lockReason.trim().length < 5) {
+      toast.error('Lý do khóa cần tối thiểu 5 ký tự')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/admin/users/${lockTarget.id}/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: lockReason.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'Không khóa được')
+        return
+      }
+      toast.success(data.message || 'Đã khóa tài khoản')
+      setLockTarget(null)
+      setLockReason('')
+      await load()
+    } catch {
+      toast.error('Lỗi kết nối')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runSweep = async () => {
+    setSweeping(true)
+    try {
+      const res = await fetch('/api/admin/users/lock-sweep', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'Rà soát không thành công')
+        return
+      }
+      if (data.locked > 0) {
+        toast.success(
+          `Đã khóa thêm ${data.locked} tài khoản: ${data.users.map((u: { name: string }) => u.name).join(', ')}`,
+        )
+      } else {
+        toast.success(data.message || 'Mọi tài khoản đều trên ngưỡng tin cậy.')
+      }
+      await load()
+    } catch {
+      toast.error('Lỗi kết nối')
+    } finally {
+      setSweeping(false)
     }
   }
 
@@ -392,6 +450,17 @@ export function AdminDashboardPage() {
                           {t.score}
                           <span className="text-xs text-muted-foreground font-semibold">/100</span>
                         </span>
+                        {!t.locked && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                            title="Khóa tay tài khoản này (hành vi xấu chưa chạm ngưỡng tự khóa)"
+                            onClick={() => { setLockTarget(t); setLockReason('') }}
+                          >
+                            <Lock className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -489,6 +558,23 @@ export function AdminDashboardPage() {
           {/* ============ TAB TÀI KHOẢN KHÓA ============ */}
           {tab === 'locked' && (
             <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Tự khóa khi điểm tin cậy &lt; 30/100 · mở khóa không reset điểm
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full"
+                  disabled={sweeping}
+                  onClick={runSweep}
+                >
+                  {sweeping
+                    ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                    : <ScanSearch className="h-4 w-4 mr-1.5" />}
+                  Rà soát tự khóa
+                </Button>
+              </div>
               {lockedUsers.length === 0 && (
                 <Card className="p-12 text-center text-muted-foreground">
                   <LockOpen className="h-10 w-10 mx-auto mb-3 opacity-40" />
@@ -639,6 +725,42 @@ export function AdminDashboardPage() {
             >
               {busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
               {reviewAction === 'APPROVED' ? 'Xác nhận duyệt' : 'Xác nhận từ chối'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== Dialog khóa tay (watchlist) ===== */}
+      <Dialog open={!!lockTarget} onOpenChange={o => !o && setLockTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-5 w-5 text-rose-600" /> Khóa tài khoản
+            </DialogTitle>
+            <DialogDescription>
+              {lockTarget
+                ? `Khóa ${lockTarget.name} (điểm tin cậy ${lockTarget.score}/100)? Họ sẽ không đăng nhập được cho tới khi được mở khóa.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={lockReason}
+            onChange={e => setLockReason(e.target.value)}
+            placeholder="Lý do khóa (bắt buộc ≥ 5 ký tự) — tài khoản bị khóa sẽ thấy lý do này, vd: Hồ sơ bằng cấp giả mạo…"
+            rows={3}
+          />
+          {lockReason.trim().length > 0 && lockReason.trim().length < 5 && (
+            <p className="text-sm text-rose-600">Lý do cần tối thiểu 5 ký tự</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLockTarget(null)}>Để sau</Button>
+            <Button
+              variant="destructive"
+              disabled={busy || lockReason.trim().length < 5}
+              onClick={submitLock}
+            >
+              {busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+              <Lock className="h-4 w-4 mr-1.5" /> Khóa tài khoản
             </Button>
           </DialogFooter>
         </DialogContent>

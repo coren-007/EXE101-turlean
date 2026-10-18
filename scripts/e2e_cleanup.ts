@@ -158,7 +158,7 @@ async function main() {
   // 12. User throwaway do CÁC SUITE TEST API tạo nhưng không tự dọn (repeat.*,
   //     booking.test*, secfix.*) — booking sót lại chiếm slot làm browser E2E
   //     đặt khóa định kỳ 4 buổi chỉ tạo được 2/4 (conflict slot). Dọn theo prefix email.
-  const TEST_PREFIXES = ['repeat.', 'booking.test', 'secfix.', 'e2e-ui.', 'race.', 'mkc2.']
+  const TEST_PREFIXES = ['repeat.', 'booking.test', 'secfix.', 'e2e-ui.', 'race.', 'mkc2.', 'sec.', 'alock.']
   const leftovers = await db.user.findMany({
     where: { email: { startsWith: TEST_PREFIXES[0] } },
     select: { id: true },

@@ -48,14 +48,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email hoặc mật khẩu không đúng' }, { status: 400 })
     }
 
-    // P6: tài khoản bị khóa do điểm tin cậy thấp (< 30) — không cho đăng nhập,
-    // hiện rõ lý do để người dùng biết phải liên hệ bộ phận hỗ trợ.
+    // P6: tài khoản bị khóa (tự khóa khi điểm tin cậy < 30, hoặc admin khóa tay)
+    // — không cho đăng nhập, hiện ĐÚNG lý do thật (lockedReason) để người dùng
+    // biết vì sao + biết phải liên hệ hỗ trợ. Message chung chỉ là fallback cho
+    // dữ liệu cũ chưa ghi lý do.
     if (user.lockedAt) {
       return NextResponse.json(
         {
-          error:
-            'Tài khoản đã bị khóa do điểm tin cậy xuống dưới 30/100 (hủy lịch nhiều lần sát giờ). ' +
-            'Vui lòng liên hệ hỗ trợ để được xem xét mở khóa.',
+          error: user.lockedReason
+            ? `${user.lockedReason} — vui lòng liên hệ hỗ trợ để được xem xét mở khóa.`
+            : 'Tài khoản đã bị khóa. Vui lòng liên hệ hỗ trợ để được xem xét mở khóa.',
           locked: true,
           lockedReason: user.lockedReason,
         },

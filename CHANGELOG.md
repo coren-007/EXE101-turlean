@@ -2,6 +2,24 @@
 
 Mọi thay đổi đáng chú ý của dự án GiaSuConnect (Turlean).
 
+## [1.3.2] — 2026-10-18
+
+Hoàn tất trọn vẹn mục "Admin dashboard + tự khóa tài khoản khi reliability < 30" (mục K lộ trình Phase 3): bịt 3 khoảng trống còn lại sau Phase 6 + 1 bug thông báo bị khóa.
+
+### Nổi bật
+
+- **Admin khóa TAY tài khoản** (`POST /api/admin/users/[id]/lock`): gia sư điểm 35 — chưa chạm ngưỡng tự khóa — nhưng có hành vi nghiêm trọng (hồ sơ lừa dối, quấy rối qua tin nhắn, dụ thanh toán ngoài nền tảng…) giờ admin can thiệp được NGAY từ bảng theo dõi. Lý do ≥ 5 ký tự hiển thị cho chính người bị khóa (tiền tố "[Admin khóa]" để phân biệt tự khóa); guard đầy đủ (không tự khóa chính mình, không khóa tài khoản ADMIN, không khóa 2 lần); ghi `AdminActionLog` `LOCK_ACCOUNT` trong cùng transaction — đối xứng hoàn toàn với route unlock.
+- **Rà soát tự khóa toàn hệ thống** (`POST /api/admin/users/lock-sweep`): đảm bảo bất biến "điểm < 30 ⇒ khóa" kể cả khi điểm rơi dưới ngưỡng qua con đường NGOÀI luồng hủy booking (dữ liệu lịch sử trước thời auto-lock, import/chỉnh DB trực tiếp, khôi phục backup). Idempotent — chạy nhiều lần cho cùng kết quả; bỏ qua tài khoản ADMIN và người đã khóa; chỉ ghi nhật ký `LOCK_SWEEP` khi thực sự khóa ai (không spam).
+- **[Sửa] Login của tài khoản bị khóa hiện ĐÚNG lý do**: trước đây mọi người bị khóa đều nhận cùng thông báo chung "do điểm tin cậy xuống dưới 30/100" — người bị admin khóa tay vì lý do khác nhận thông báo SAI. Giờ `error` = lý do thật (`lockedReason`) + câu hướng dẫn liên hệ hỗ trợ.
+- Dọn vệ sinh: 4 user `sec.*` sót của đợt test bị gián đoạn (làm bẩn watchlist bằng tên XSS test) + `e2e_cleanup` giờ tự chống tích lũy các prefix test `sec.` / `alock.` cho các đợt regression sau.
+
+### Chi tiết kỹ thuật
+
+- UI dashboard: mỗi hàng watchlist (gia sư chưa khóa) thêm nút Khóa → dialog lý do (validate ≥ 5 ký tự, cảnh báo hiệu lực); tab "Tài khoản khóa" thêm nút "Rà soát tự khóa" kèm spinner + toast kết quả (liệt kê tên người vừa bị khóa).
+- `computeReliabilityBulk` dùng chung cho sweep — không thêm query N+1; mọi update khóa + log gom trong 1 `$transaction`.
+- Test mới `scripts/test_admin_lock.py` — **32/32 PASS** (chạy 2 lần liên tiếp idempotent): phân quyền 401/403, validate zod, guard tự khóa/khóa admin/khóa 2 lần, DB + audit log LOCK_ACCOUNT/LOCK_SWEEP đúng target, session cũ chết ngay, sweep đúng 1 người + lần 2 idempotent + không đụng ADMIN, cleanup trả DB sạch (3 user + 8 booking + 8 cancellation + log window). Kèm `scripts/alock_tools.ts` (setup fabricate 8×10 điểm = 20 chưa khóa / verify / logs / cleanup).
+- Hồi quy: **API 266/266** (phase3 45 · phase4 30 · phase5 26 · repeatweeks 33 · booking 46 · deadline 14 · phase6 60 · makeup 12) + **browser 87/87** (312s) · typecheck 0 lỗi · lint 0 lỗi · production build 51 route — smoke 2 route mới trực tiếp trên prod server (admin 200 / guest 401).
+
 ## [1.3.1] — 2026-10-18
 
 Audit bảo mật — sửa 8 phát hiện theo thứ tự ưu tiên (1 NGUY HIỂM · 4 CAO · 3 TRUNG BÌNH), từng mục đã kiểm chứng động.
@@ -329,9 +347,9 @@ bun run seed         # seed lại kèm dữ liệu reliability demo
 
 ## K. Còn lại cho Phase 3 (Launch & Grow)
 
-- Workflow verify bằng cấp thật (upload → admin duyệt) — hiện "Đã xác minh" là flag qua DB
+- ~~Workflow verify bằng cấp thật (upload → admin duyệt)~~ — **XONG từ 1.3.0/Phase 6** (tutor upload 3 loại giấy tờ → admin duyệt/từ chối kèm lý do → badge "Đã xác minh" thật)
 - Payment (VNPay/MoMo) — hiện "Thanh toán trực tiếp sau buổi học" (0% phí giai đoạn Founding Tutor)
-- Admin dashboard + tự khóa tài khoản khi reliability < 30
+- ~~Admin dashboard + tự khóa tài khoản khi reliability < 30~~ — **XONG từ 1.3.0/Phase 6, hoàn tất trọn vẹn ở 1.3.2** (thêm khóa tay bởi admin + rà soát toàn hệ thống)
 - SEO/multi-page routing, push notification (email Resend đã sẵn đường qua cron reminder)
 
 ---
