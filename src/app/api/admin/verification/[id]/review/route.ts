@@ -55,6 +55,8 @@ export async function POST(
   }
 
   // Cập nhật yêu cầu + bật isVerified (khi duyệt) trong 1 transaction
+  // SẸ-LOG (B13): ghi thêm AdminActionLog để mọi thao tác admin nằm trong
+  // nhật ký chung (reviewedById riêng lẻ khó truy vết tổng thể)
   const [updated] = await db.$transaction([
     db.verificationRequest.update({
       where: { id },
@@ -76,6 +78,19 @@ export async function POST(
     ...(parsed.data.status === 'APPROVED'
       ? [db.user.update({ where: { id: existing.tutorId }, data: { isVerified: true } })]
       : []),
+    db.adminActionLog.create({
+      data: {
+        adminId: user.id,
+        action: parsed.data.status === 'APPROVED' ? 'VERIFY_APPROVE' : 'VERIFY_REJECT',
+        targetType: 'VERIFICATION_REQUEST',
+        targetId: id,
+        meta: JSON.stringify({
+          tutorId: existing.tutorId,
+          kind: existing.kind,
+          reviewNote: parsed.data.reviewNote ?? null,
+        }),
+      },
+    }),
   ])
 
   return NextResponse.json({

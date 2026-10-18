@@ -27,10 +27,30 @@ export async function POST(
     return NextResponse.json({ error: 'Không thể tự mở khóa chính mình' }, { status: 400 })
   }
 
-  await db.user.update({
-    where: { id },
-    data: { lockedAt: null, lockedReason: null },
+  // SẸ-LOG (B13): mở khóa + ghi nhật ký trong cùng transaction — trước đây
+  // unlock hoàn toàn VÔ DANH (verification có reviewedById nhưng unlock không ai ghi)
+  const unlocked = await db.$transaction(async tx => {
+    await tx.user.update({
+      where: { id },
+      data: { lockedAt: null, lockedReason: null },
+    })
+    await tx.adminActionLog.create({
+      data: {
+        adminId: user.id,
+        action: 'UNLOCK_ACCOUNT',
+        targetType: 'USER',
+        targetId: id,
+        meta: JSON.stringify({
+          targetName: target.name,
+          targetRole: target.role,
+          previousLockedReason: target.lockedReason,
+          reliabilityKept: true, // mở khóa KHÔNG reset điểm tin cậy
+        }),
+      },
+    })
+    return true
   })
+  if (!unlocked) return NextResponse.json({ error: 'Không mở khóa được' }, { status: 500 })
 
   return NextResponse.json({
     message: `Đã mở khóa tài khoản ${target.name} — điểm tin cậy được giữ nguyên.`,

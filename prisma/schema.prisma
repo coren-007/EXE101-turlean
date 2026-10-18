@@ -67,6 +67,8 @@ model User {
   verificationRequests  VerificationRequest[] @relation("VerificationRequestTutor")
   // P6: các yêu cầu mà user này (admin) đã duyệt
   verificationReviews  VerificationRequest[] @relation("VerificationReviewer")
+  // SẸ-LOG (B13): nhật ký thao tác quản trị do user này thực hiện
+  adminActionLogs  AdminActionLog[] @relation("AdminActionActor")
 
   // P5: index cho truy vấn tìm kiếm (where role=TUTOR + city + hourlyRate range)
   @@index([role, city])
@@ -153,6 +155,12 @@ model Booking {
   cancellation Cancellation?
 
   @@index([seriesId])
+  // SẸ-IDX (C1, audit hiệu năng): booking conflict-check chạy findFirst theo
+  // (tutorId, date, status) và cron query theo (status, date) — trước đây chỉ có
+  // index seriesId nên toàn table scan khi dữ liệu lớn
+  @@index([tutorId, date])
+  @@index([studentId, date])
+  @@index([date, status])
 }
 
 // Reliability system — mọi lần hủy lịch đều được ghi lại kèm mức độ vi phạm
@@ -399,4 +407,27 @@ model ClassFeePayment {
   @@unique([classId, enrollmentId, period])
   @@index([classId])
   @@index([studentParentId])
+}
+
+// ===== SẸ-LOG (B13, audit TRUNG BÌNH): Nhật ký thao tác quản trị =====
+// Audit phát hiện: unlock tài khoản KHÔNG ai ghi (verification có reviewedById
+// nhưng unlock hoàn toàn vô danh) — admin làm gì với tài khoản người dùng
+// không có dấu vết. Model này ghi mọi thao tác admin nhạy cảm.
+//   action: 'UNLOCK_ACCOUNT' | 'VERIFY_APPROVE' | 'VERIFY_REJECT' | ...
+//   meta: JSON string chi tiết (tên đích, lý do, điểm tin cậy giữ nguyên...)
+// adminId nullable + onDelete: SetNull — giữ log kể cả khi tài khoản admin bị xóa.
+model AdminActionLog {
+  id          String    @id @default(cuid())
+  adminId     String?
+  action      String
+  targetType  String?   // 'USER' | 'VERIFICATION_REQUEST'
+  targetId    String?
+  meta        String?   // JSON string
+  createdAt   DateTime  @default(now())
+
+  admin       User?     @relation("AdminActionActor", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@index([action])
 }
