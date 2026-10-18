@@ -17,6 +17,18 @@ import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { computeReliabilityBulk } from '@/lib/reliability'
 import { normalizeVi, normalizeTutorHaystack } from '@/lib/text'
+import { checkRateLimit, clientIp } from '@/lib/rate-limit'
+
+// SẸ-RL2 (B5, audit bảo mật): route public NẶNG nhất hệ thống — tải toàn bộ
+// gia sư + toàn bộ review từng người rồi sort/lọc/phân trang in-memory,
+// trước đây KHÔNG có rate limit (suggest nhẹ hơn lại có 60/phút). Kịch bản
+// DoS: vòng lặp request liên tục hút CPU/IO. Giờ 60 req/phút/IP — khớp ngưỡng
+// suggest, thoải mái cho người dùng thật (đổi filter/chuyển trang liên tục),
+// vẫn chặn vòng lặp dò/DoS (1 req/giây liên tục mới chạm hạn).
+const TUTORS_RATE_LIMIT = 60
+// Hard cap số dòng nạp vào bộ nhớ cho 1 lần tìm (chống phình to khi DB lớn;
+// vượt ngưỡng này cần refactor đẩy sort/lọc xuống SQL + aggregate review)
+const MAX_LOAD = 1000
 
 // SQLite: contains đã case-insensitive; PostgreSQL: cần mode insensitive
 const IS_POSTGRES = (process.env.DATABASE_URL ?? '').startsWith('postgres')
@@ -106,6 +118,15 @@ async function withReliabilityList(tutors: any[]) {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
+
+  // SẸ-RL2 (B5): rate limit route tìm kiếm công khai
+  const rl = checkRateLimit(`tutors:${clientIp(req)}`, TUTORS_RATE_LIMIT, 60_000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Quá nhiều yêu cầu tìm kiếm trong phút này. Vui lòng thử lại sau ít phút.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   // ===== P5: chế độ lấy theo ids — dùng cho "Xem gần đây" / gợi ý cá nhân hóa =====
   // Giữ đúng thứ tự ids truyền vào (mới xem nhất lên trước), bỏ qua filter/phân trang.
@@ -219,6 +240,7 @@ export async function GET(req: NextRequest) {
 
   let tutors = await db.user.findMany({
     where: whereWithQ,
+    take: MAX_LOAD, // SẸ-RL2 (B5): hard cap chống nạp không giới hạn
     include: {
       tutorSubjects: { include: { subject: true } },
       reviewsReceived: { select: { rating: true } },
@@ -234,6 +256,7 @@ export async function GET(req: NextRequest) {
     if (norm) {
       const all = await db.user.findMany({
         where,
+        take: MAX_LOAD, // SẸ-RL2 (B5)
         include: {
           tutorSubjects: { include: { subject: true } },
           reviewsReceived: { select: { rating: true } },
