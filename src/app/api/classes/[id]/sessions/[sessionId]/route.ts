@@ -113,37 +113,76 @@ export async function PATCH(
     // cùng đè lên một khung giờ (check→act ngoài tx).
     const race = { conflictMsg: null as string | null }
     const result = await db.$transaction(async tx => {
+      // Buổi đã nghỉ đúng slot makeup (nếu có) — sẽ được HỒI SINH thành buổi bù
+      let rested: { id: string; note: string | null } | null = null
       if (mu) {
-        // Trùng buổi khác? (exclude buổi gốc — nó sắp bị hủy)
+        // Trùng buổi lớp khác / buổi 1-1 cùng khung giờ mới? (exclude buổi gốc)
         const conflict = await checkSessionReschedule(user.id, sessionId, mu.date, mu.startTime, mu.endTime, tx)
         if (conflict) {
           race.conflictMsg = `Không thể xếp buổi bù — ${conflict}`
           return null
         }
+        // Trùng buổi khác CÒN LỊCH của chính lớp này? (exclude buổi gốc — nó sắp bị hủy).
+        // Buổi CANCELLED không còn chiếm khung giờ → dạy bù ĐÚNG slot buổi đã nghỉ
+        // là hợp lệ: nghỉ lễ/hủy buổi giải phóng khung giờ (khớp luật
+        // checkSessionReschedule vốn đã lọc status — trước đây existed check không
+        // lọc nên buổi đã nghỉ vẫn chặn, phát hiện khi chạy E2E browser UI)
         const existed = await tx.classSession.findFirst({
-          where: { classId: session.classId, date: mu.date, startTime: mu.startTime },
+          where: {
+            classId: session.classId,
+            date: mu.date,
+            startTime: mu.startTime,
+            status: { not: 'CANCELLED' },
+          },
         })
         if (existed) {
           race.conflictMsg = 'Lớp đã có buổi cùng ngày cùng giờ này'
           return null
         }
+        // Slot này từng có buổi đã nghỉ? Ghi nhận để HỒI SINH thành buổi bù bên dưới
+        // (DB ràng buộc unique [classId, date, startTime] — hồi sinh dòng cũ thay vì
+        // tạo dòng thứ 2 cùng slot: giữ nguyên ràng buộc, không cần migration)
+        rested = await tx.classSession.findFirst({
+          where: {
+            classId: session.classId,
+            date: mu.date,
+            startTime: mu.startTime,
+            status: 'CANCELLED',
+          },
+          select: { id: true, note: true },
+        })
       }
       const updated = await tx.classSession.update({
         where: { id: sessionId },
         data: { status: 'CANCELLED', note: reason },
       })
       if (mu) {
-        const makeupSession = await tx.classSession.create({
-          data: {
-            classId: session.classId,
-            date: mu.date,
-            startTime: mu.startTime,
-            endTime: mu.endTime,
-            status: 'SCHEDULED',
-            makeupForId: sessionId,
-            note: `Dạy bù cho buổi ${formatDate(session.date)} (${reason})`,
-          },
-        })
+        const makeupNote = `Dạy bù cho buổi ${formatDate(session.date)} (${reason})`
+        // rested !== null → slot mục tiêu từng là buổi đã nghỉ: hồi sinh dòng đó
+        // thành buổi bù (đổi endTime nếu khác, gắn makeupForId về buổi gốc mới)
+        const makeupSession = rested
+          ? await tx.classSession.update({
+              where: { id: rested.id },
+              data: {
+                endTime: mu.endTime,
+                status: 'SCHEDULED',
+                makeupForId: sessionId,
+                note: rested.note
+                  ? `${makeupNote} — hồi sinh từ buổi đã nghỉ (${rested.note})`
+                  : makeupNote,
+              },
+            })
+          : await tx.classSession.create({
+              data: {
+                classId: session.classId,
+                date: mu.date,
+                startTime: mu.startTime,
+                endTime: mu.endTime,
+                status: 'SCHEDULED',
+                makeupForId: sessionId,
+                note: makeupNote,
+              },
+            })
         return { updated, makeupSession }
       }
       return { updated, makeupSession: null }
