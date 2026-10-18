@@ -64,6 +64,33 @@ function makePriceMarker(price: number, isActive: boolean) {
   })
 }
 
+// SẬ-MAP (audit TB — XSS): popup Leaflet nhận HTML thô (không tự escape như JSX).
+// Tên/môn/quận của gia sư là dữ liệu người dùng tự nhập — nếu chứa <img onerror=...>
+// sẽ chạy script trong popup. Escape mọi giá trị chèn vào template string popup.
+function escapeHtml(v: unknown): string {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+// Dựng HTML popup cho marker gia sư (đã escape toàn bộ dữ liệu người dùng)
+function tutorPopupHtml(t: Tutor): string {
+  const meta = [
+    `⭐ ${t.avgRating.toFixed(1)} (${t.reviewCount})`,
+    [t.district, t.city].filter(Boolean).join(', '),
+    t.distanceKm != null ? t.distanceKm + 'km' : '',
+  ].filter(Boolean).join(' · ')
+  return `
+    <div class="popup-title">${escapeHtml(t.name)}</div>
+    <div class="popup-meta">${escapeHtml(t.profession || '')}</div>
+    <div class="popup-meta">${escapeHtml(meta)}</div>
+    <div class="popup-price">${escapeHtml(formatVnd(t.minPrice))}<span class="text-xs font-normal text-muted-foreground">/giờ</span></div>
+  `
+}
+
 function makeUserMarker() {
   return L.divIcon({
     className: 'user-marker-wrap',
@@ -215,12 +242,7 @@ function ClusterLayer({
         const marker = L.marker([t.lat, t.lng], {
           icon: makePriceMarker(t.minPrice, selectedId === t.id),
         })
-        marker.bindPopup(`
-          <div class="popup-title">${t.name}</div>
-          <div class="popup-meta">${t.profession || ''}</div>
-          <div class="popup-meta">⭐ ${t.avgRating.toFixed(1)} (${t.reviewCount}) · ${t.district || ''}${t.city ? ', ' + t.city : ''}${t.distanceKm != null ? ' · ' + t.distanceKm + 'km' : ''}</div>
-          <div class="popup-price">${formatVnd(t.minPrice)}<span class="text-xs font-normal text-muted-foreground">/giờ</span></div>
-        `)
+        marker.bindPopup(tutorPopupHtml(t))
         marker.on('click', () => onSelect?.(t.id))
         marker.addTo(map)
         markers.push(marker)
@@ -250,12 +272,7 @@ function ClusterLayer({
       const marker = L.marker([t.lat, t.lng], {
         icon: makePriceMarker(t.minPrice, selectedId === t.id),
       })
-      marker.bindPopup(`
-        <div class="popup-title">${t.name}</div>
-        <div class="popup-meta">${t.profession || ''}</div>
-        <div class="popup-meta">⭐ ${t.avgRating.toFixed(1)} (${t.reviewCount}) · ${t.district || ''}${t.city ? ', ' + t.city : ''}${t.distanceKm != null ? ' · ' + t.distanceKm + 'km' : ''}</div>
-        <div class="popup-price">${formatVnd(t.minPrice)}<span class="text-xs font-normal text-muted-foreground">/giờ</span></div>
-      `)
+      marker.bindPopup(tutorPopupHtml(t))
       marker.on('click', () => onSelect?.(t.id))
       cluster.addLayer(marker)
     })

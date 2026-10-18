@@ -1,0 +1,115 @@
+// Dọn toàn bộ dữ liệu E2E browser — trả DB demo về trạng thái chuẩn.
+// Chạy: bun run scripts/e2e_cleanup.ts
+import { PrismaClient } from '@prisma/client'
+import fs from 'fs'
+const db = new PrismaClient()
+
+async function main() {
+  const log: string[] = []
+
+  // 1. Booking review test (hoa × sarah, note 'E2E review test') + review của nó
+  const rvBookings = await db.booking.findMany({ where: { note: 'E2E review test' }, select: { id: true } })
+  for (const b of rvBookings) {
+    await db.review.deleteMany({ where: { bookingId: b.id } })
+    await db.cancellation.deleteMany({ where: { bookingId: b.id } })
+    await db.booking.deleteMany({ where: { id: b.id } })
+  }
+  log.push(`review-test bookings xóa: ${rvBookings.length}`)
+
+  // 2. Booking E2E của hoa × minhanh (18/10 đơn + series T7 24/10) — mọi trạng thái
+  const e2eDates = ['2026-10-18', '2026-10-24', '2026-10-31', '2026-11-07', '2026-11-14']
+  const minhanh = await db.user.findUnique({ where: { email: 'minhanh.tutor@example.com' }, select: { id: true } })
+  const hoa = await db.user.findUnique({ where: { email: 'hoa.parent@example.com' }, select: { id: true } })
+  const testBookings = await db.booking.findMany({
+    where: { tutorId: minhanh!.id, studentId: hoa!.id, date: { in: e2eDates } },
+    select: { id: true, status: true },
+  })
+  for (const b of testBookings) {
+    await db.review.deleteMany({ where: { bookingId: b.id } })
+    await db.cancellation.deleteMany({ where: { bookingId: b.id } })
+    await db.booking.deleteMany({ where: { id: b.id } })
+  }
+  log.push(`booking E2E xóa: ${testBookings.length}`)
+
+  // 3. Revert series demo (T4 18:30 từ 28/10) về PENDING nếu bị confirm trong E2E
+  const demoSeries = await db.booking.findMany({
+    where: { tutorId: minhanh!.id, studentId: hoa!.id, startTime: '18:30', date: { gte: new Date().toISOString().slice(0, 10) }, status: { not: 'PENDING' } },
+    select: { id: true },
+  })
+  if (demoSeries.length) {
+    await db.booking.updateMany({ where: { id: { in: demoSeries.map((b) => b.id) } }, data: { status: 'PENDING' } })
+  }
+  log.push(`series demo revert về PENDING: ${demoSeries.length}`)
+
+  // 4. Makeup E2E — dò theo NỘI DUNG (không phụ thuộc e2e_data.json bị prep ghi đè):
+  //    buổi bù có note "Dạy bù cho buổi ... (E2E: ...)" → xóa + trả buổi gốc SCHEDULED
+  const e2eMakeups = await db.classSession.findMany({
+    where: { note: { contains: '(E2E:' }, makeupForId: { not: null } },
+    select: { id: true, makeupForId: true },
+  })
+  for (const m of e2eMakeups) {
+    await db.classAttendance.deleteMany({ where: { sessionId: m.id } })
+    await db.classSession.delete({ where: { id: m.id } })
+    if (m.makeupForId) {
+      await db.classSession.update({ where: { id: m.makeupForId }, data: { status: 'SCHEDULED', note: null } }).catch(() => {})
+    }
+  }
+  if (e2eMakeups.length) log.push(`makeup E2E dọn: ${e2eMakeups.length}`)
+
+  // 4b. Buổi bù seed 26/10 (của buổi 20/10) có thể bị luồng Dời di chuyển → trả về 26/10
+  const seedMk = await db.classSession.updateMany({
+    where: { makeupForId: 'cmvcexzrm000amhczb30o91jn', date: { not: '2026-10-26' } },
+    data: { date: '2026-10-26', startTime: '18:00', endTime: '20:30', note: 'Dạy bù cho buổi 20/10/2026 (test nghỉ buổi có bù)' },
+  })
+  if (seedMk.count) log.push(`buổi bù seed 26/10 khôi phục: ${seedMk.count}`)
+  // 4c. thuha: request bị E2E từ chối → trả PENDING (trạng thái demo chuẩn)
+  const th = await db.verificationRequest.updateMany({
+    where: { tutor: { email: 'thuha.tutor@example.com' }, status: { not: 'PENDING' } },
+    data: { status: 'PENDING', reviewNote: null, reviewedAt: null },
+  })
+  if (th.count) log.push(`thuha reset PENDING: ${th.count}`)
+
+  // 5. Verification request E2E của minhanh
+  const vr = await db.verificationRequest.deleteMany({ where: { fileName: 'e2e_degree.png' } })
+  log.push(`verification e2e_degree xóa: ${vr.count}`)
+
+  // 6. Throwaway users (booking/cancellation/favorite/session/review/conversation FK trước)
+  for (const email of ['e2e.student@example.com', 'e2e.tutor@example.com']) {
+    const u = await db.user.findUnique({ where: { email }, select: { id: true } })
+    if (!u) continue
+    await db.review.deleteMany({ where: { OR: [{ tutorId: u.id }, { studentId: u.id }] } })
+    await db.cancellation.deleteMany({ where: { booking: { OR: [{ tutorId: u.id }, { studentId: u.id }] } } })
+    await db.booking.deleteMany({ where: { OR: [{ tutorId: u.id }, { studentId: u.id }] } })
+    await db.favorite.deleteMany({ where: { OR: [{ userId: u.id }, { tutorId: u.id }] } })
+    await db.classEnrollment.deleteMany({ where: { studentParentId: u.id } })
+    await db.classFeePayment.deleteMany({ where: { enrollment: { studentParentId: u.id } } })
+    await db.verificationRequest.deleteMany({ where: { tutorId: u.id } })
+    // hội thoại + tin nhắn của throwaway
+    const convs = await db.conversation.findMany({ where: { OR: [{ tutorId: u.id }, { studentId: u.id }] }, select: { id: true } })
+    for (const c of convs) {
+      await db.message.deleteMany({ where: { conversationId: c.id } })
+      await db.conversation.delete({ where: { id: c.id } })
+    }
+    await db.session.deleteMany({ where: { userId: u.id } })
+    await db.user.delete({ where: { id: u.id } })
+    log.push(`đã xóa user ${email}`)
+  }
+
+  // 7. Favorite hoa → minhanh nếu còn
+  const fav = await db.favorite.deleteMany({ where: { userId: hoa!.id, tutorId: minhanh!.id } })
+  log.push(`favorite hoa→minhanh xóa: ${fav.count}`)
+
+  // 8. Review E2E của hoa cho sarah (nếu gửi thành công)
+  const rv2 = await db.review.deleteMany({ where: { studentId: hoa!.id, comment: { startsWith: 'Cô dạy nhiệt tình' } } })
+  log.push(`review E2E xóa: ${rv2.count}`)
+
+  const [users, bookings, cancels, vrc] = await Promise.all([
+    db.user.count(),
+    db.booking.count(),
+    db.cancellation.count(),
+    db.verificationRequest.count(),
+  ])
+  console.log(log.join('\n'))
+  console.log(`\nSau dọn: users=${users} bookings=${bookings} cancels=${cancels} verification=${vrc}`)
+}
+main().finally(() => db.$disconnect())

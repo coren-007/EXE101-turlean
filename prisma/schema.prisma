@@ -18,7 +18,7 @@ model User {
   email          String   @unique
   passwordHash   String
   name           String
-  role           String   @default("STUDENT") // TUTOR | STUDENT
+  role           String   @default("STUDENT") // TUTOR | STUDENT | ADMIN (admin không đăng ký công khai)
   phone          String?
   avatar         String?
   bio            String?
@@ -38,6 +38,10 @@ model User {
   teachesAtOwnPlace    Boolean @default(true)
   teachesOnline        Boolean @default(false)
   travelRadiusKm       Int?    // how far tutor is willing to travel
+  // P6: tự khóa tài khoản khi điểm tin cậy < 30 (LOCK_THRESHOLD) — admin có thể mở khóa lại.
+  // lockedAt != null ⇒ không đăng nhập được & mọi API coi như chưa xác thực.
+  lockedAt          DateTime?
+  lockedReason      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -59,6 +63,10 @@ model User {
   // Gia sư yêu thích (wishlist) — đã lưu bởi user này
   favoritesGiven    Favorite[]       @relation("FavoriteOwner")
   favoriteTutors    Favorite[]       @relation("FavoriteTutor")
+  // P6: yêu cầu xác minh bằng cấp gia sư gửi lên (admin duyệt)
+  verificationRequests  VerificationRequest[] @relation("VerificationRequestTutor")
+  // P6: các yêu cầu mà user này (admin) đã duyệt
+  verificationReviews  VerificationRequest[] @relation("VerificationReviewer")
 
   // P5: index cho truy vấn tìm kiếm (where role=TUTOR + city + hourlyRate range)
   @@index([role, city])
@@ -339,6 +347,34 @@ model ClassAttendance {
 
   @@unique([sessionId, studentParentId])
   @@index([studentParentId])
+}
+
+// ===== P6: Yêu cầu xác minh bằng cấp =====
+// Gia sư upload ảnh/PDF bằng cấp → admin duyệt (APPROVED ⇒ isVerified = true).
+// File lưu thẳng trong DB (Bytes) để chạy được cả SQLite lẫn PostgreSQL mà không cần
+// dịch vụ lưu trữ ngoài; giới hạn 5MB, chỉ nhận ảnh (png/jpg/webp) hoặc PDF.
+model VerificationRequest {
+  id           String    @id @default(cuid())
+  tutorId      String
+  // DEGREE = bằng cấp | CERTIFICATE = chứng chỉ | ID_CARD = giấy tờ tùy thân
+  kind         String
+  fileName     String
+  fileType     String    // mime type
+  fileSize     Int       // bytes
+  fileData     Bytes
+  note         String?   // ghi chú của gia sư
+  // PENDING = chờ admin duyệt | APPROVED = đã duyệt | REJECTED = bị từ chối
+  status       String    @default("PENDING")
+  reviewNote   String?   // phản hồi của admin khi duyệt/từ chối
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  tutor      User  @relation("VerificationRequestTutor", fields: [tutorId], references: [id], onDelete: Cascade)
+  reviewer   User? @relation("VerificationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([tutorId])
 }
 
 // ===== Sổ học phí lớp nhóm =====

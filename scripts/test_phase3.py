@@ -226,8 +226,14 @@ st, out = req('GET', '/api/classes/mine', role='tutor')
 t10f = next((c for c in out.get('classes', []) if c['id'] == toan10['id']), None)
 future2 = next((s for s in t10f['sessions'] if s['status'] == 'SCHEDULED' and s['date'] >= today.isoformat() and not s.get('makeupForId')), None)
 if future2:
+    # SẸ-HOL (fix bảo mật): ngày lễ toàn hệ thống giờ chỉ ADMIN được thêm/xóa —
+    # gia sư (tạo buổi trước đây được) giờ nhận 403.
     st, out = req('POST', '/api/holidays', {'date': future2['date'], 'name': 'Lễ test tự động'}, role='tutor')
-    check('POST holiday trúng buổi → buổi bị hủy + đếm sessionsCancelled',
+    check('POST holiday bằng GIA SƯ → 403 (chỉ ADMIN được thêm lễ toàn hệ thống)', st == 403, f'st={st} out={out}')
+    st, out = req('POST', '/api/auth/login', {'email': 'admin@turlean.vn', 'password': '123456'}, role='admin')
+    check('login admin để quản lý ngày lễ', st == 200)
+    st, out = req('POST', '/api/holidays', {'date': future2['date'], 'name': 'Lễ test tự động'}, role='admin')
+    check('POST holiday trúng buổi (ADMIN) → buổi bị hủy + đếm sessionsCancelled',
           st == 200 and out.get('sessionsCancelled', 0) >= 1, f'st={st} out={out}')
     test_holiday_id = out.get('holiday', {}).get('id')
 
@@ -236,9 +242,11 @@ if future2:
     s2 = next((s for s in t10['sessions'] if s['id'] == future2['id']), None)
     check('buổi trúng lễ chuyển CANCELLED + note "Nghỉ lễ"', s2['status'] == 'CANCELLED' and 'Nghỉ lễ' in (s2.get('note') or ''))
 
-    # Xóa ngày lễ test
+    # Xóa ngày lễ test — gia sư 403, ADMIN 200
     st, out = req('DELETE', f"/api/holidays/{test_holiday_id}", role='tutor')
-    check('DELETE holiday', st == 200)
+    check('DELETE holiday bằng GIA SƯ → 403', st == 403, f'st={st}')
+    st, out = req('DELETE', f"/api/holidays/{test_holiday_id}", role='admin')
+    check('DELETE holiday (ADMIN) → 200', st == 200)
 else:
     print('  (bỏ qua — không còn buổi tương lai nào)')
 

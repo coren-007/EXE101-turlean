@@ -5,8 +5,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
-import { classifyCancellation } from '@/lib/reliability'
+import { classifyCancellation, applyAutoLockIfNeeded } from '@/lib/reliability'
 import { notifyCancellation } from '@/lib/notify'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 const cancelSchema = z.object({
   reason: z.string().trim().min(5, 'Lý do hủy phải có ít nhất 5 ký tự'),
@@ -23,6 +24,15 @@ export async function POST(
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
+
+  // SẬ-RL: chặn spam hủy — 20 lần / giờ / tài khoản
+  const rl = checkRateLimit(`cancel:${user.id}`, 20, 3_600_000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: `Bạn đã thực hiện quá nhiều thao tác trong giờ này. Vui lòng thử lại sau ${Math.ceil(rl.retryAfterSec / 60)} phút.` },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   const { id } = await params
 
@@ -71,9 +81,18 @@ export async function POST(
     hoursBefore,
   )
 
-  // Ghi nhận hủy + cập nhật trạng thái booking trong 1 transaction
-  const [, updated] = await db.$transaction([
-    db.cancellation.create({
+  // SẬ-BK4 (audit TB — idempotency + race): ghi hủy + đổi trạng thái trong 1 transaction
+  // dùng updateMany CÓ ĐIỀU KIỆN (status còn PENDING/CONFIRMED). Nhờ đó:
+  //  · Hủy tuần tự lần 2 → count=0 → 400 "đã hủy trước đó", KHÔNG trừ điểm lần 2.
+  //  · Hủy song song (2 request cùng lúc) → chỉ 1 request thắng điều kiện, request
+  //    thua nhận 400 — không còn cửa sổ đọc-check-ghi tách rời tạo 2 bản ghi trừ điểm.
+  const cancelResult = await db.$transaction(async (tx) => {
+    const upd = await tx.booking.updateMany({
+      where: { id: booking.id, status: { in: ['PENDING', 'CONFIRMED'] } },
+      data: { status: 'CANCELLED' },
+    })
+    if (upd.count === 0) return null
+    await tx.cancellation.create({
       data: {
         bookingId: booking.id,
         cancelledBy: isTutor ? 'TUTOR' : 'STUDENT',
@@ -83,12 +102,17 @@ export async function POST(
         severity: rule.severity,
         points: rule.points,
       },
-    }),
-    db.booking.update({
-      where: { id: booking.id },
-      data: { status: 'CANCELLED' },
-    }),
-  ])
+    })
+    return tx.booking.findUnique({ where: { id: booking.id } })
+  })
+
+  if (!cancelResult) {
+    return NextResponse.json(
+      { error: 'Lịch này đã bị hủy trước đó hoặc không thể hủy — vui lòng tải lại trang.' },
+      { status: 400 },
+    )
+  }
+  const updated = cancelResult
 
   // Mục đích 1 & 2: báo ngay cho bên kia biết buổi học đã bị hủy + lý do
   const subject = await db.subject.findUnique({
@@ -107,6 +131,21 @@ export async function POST(
     points: rule.points,
   })
 
+  // P6: sau khi trừ điểm, tự khóa tài khoản của người hủy nếu điểm tin cậy < 30.
+  // Là best-effort sau giao dịch chính — lỗi ở đây không làm fail request hủy.
+  let autoLock: { locked: boolean; score: number } | null = null
+  try {
+    const cancellerId = isTutor ? booking.tutorId : booking.studentId
+    autoLock = await applyAutoLockIfNeeded(cancellerId)
+  } catch (e) {
+    console.error('[auto-lock] không kiểm tra được ngưỡng khóa:', e)
+  }
+
+  const lockWarning =
+    autoLock?.locked
+      ? ` Tài khoản của bạn đã bị KHÓA do điểm tin cậy còn ${autoLock.score}/100 — sẽ không thể đăng nhập cho tới khi quản trị viên mở khóa.`
+      : ''
+
   return NextResponse.json({
     booking: updated,
     violation: {
@@ -115,9 +154,11 @@ export async function POST(
       label: rule.label,
       hoursBefore: Math.round(hoursBefore * 10) / 10,
     },
+    autoLocked: autoLock?.locked ?? false,
+    reliabilityScore: autoLock?.score ?? null,
     message:
       rule.points > 0
-        ? `Đã hủy lịch. Lưu ý: ${rule.label.toLowerCase()} — trừ ${rule.points} điểm độ tin cậy.`
-        : 'Đã hủy lịch (không ảnh hưởng điểm độ tin cậy).',
+        ? `Đã hủy lịch. Lưu ý: ${rule.label.toLowerCase()} — trừ ${rule.points} điểm độ tin cậy.${lockWarning}`
+        : 'Đã hủy lịch (không ảnh hưởng điểm độ tin cậy).' + lockWarning,
   })
 }

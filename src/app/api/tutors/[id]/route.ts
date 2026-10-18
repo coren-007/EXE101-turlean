@@ -1,6 +1,9 @@
 // GET /api/tutors/[id] — hồ sơ công khai của gia sư
-// P0-3: KHÔNG trả email/phone ra public. SĐT chỉ trả khi người xem
-// là học sinh có booking CONFIRMED/COMPLETED với gia sư này.
+// P0-3: KHÔNG trả email/phone ra public. SĐT + ĐỊA CHỈ NHÀ (SẬ-TUT, audit TB)
+// chỉ trả khi người xem là học sinh có booking CONFIRMED/COMPLETED với gia sư này
+// hoặc chính gia sư đó — trước đây `address` trả vô điều kiện cho người xem ẩn danh
+// (chỉ email/SĐT được gate). Quận/thành + lat/lng vẫn công khai để bản đồ tìm kiếm
+// hoạt động (dữ liệu khu vực — không phải địa chỉ đường).
 // P0-2: avgRating tính từ TOÀN BỘ review (trước đây chỉ lấy 20 review mới nhất).
 // P0-1: kèm reliability score công khai.
 import { NextRequest, NextResponse } from 'next/server'
@@ -43,10 +46,13 @@ export async function GET(
   // P0-1: reliability score
   const reliability = await computeReliability(id)
 
-  // P0-3: chỉ cấp SĐT cho học sinh có booking đang hoạt động với gia sư này
+  // P0-3 + SẬ-TUT: chỉ cấp SĐT/địa chỉ nhà cho người xem có booking đang hoạt động
+  // với gia sư này (hoặc chính gia sư xem hồ sơ của mình)
   const viewer = await getCurrentUser()
   let phone: string | null = null
-  if (viewer && viewer.role === 'STUDENT' && viewer.id !== id) {
+  let address: string | null = null
+  const isSelf = viewer?.id === tutor.id
+  if (viewer && viewer.role === 'STUDENT' && !isSelf) {
     const activeBooking = await db.booking.findFirst({
       where: {
         studentId: viewer.id,
@@ -55,7 +61,13 @@ export async function GET(
       },
       select: { id: true },
     })
-    if (activeBooking) phone = tutor.phone
+    if (activeBooking) {
+      phone = tutor.phone
+      address = tutor.address
+    }
+  } else if (isSelf) {
+    phone = tutor.phone
+    address = tutor.address
   }
 
   // Lịch bận theo NGÀY CỤ THỂ trong 8 tuần tới (PENDING/CONFIRMED):
@@ -88,7 +100,7 @@ export async function GET(
     phone, // null nếu chưa có booking hoạt động
     district: tutor.district,
     city: tutor.city,
-    address: tutor.address,
+    address, // SẬ-TUT: null với người xem ẩn danh/chưa có booking hoạt động
     lat: tutor.lat,
     lng: tutor.lng,
     teachesAtStudentHome: tutor.teachesAtStudentHome,

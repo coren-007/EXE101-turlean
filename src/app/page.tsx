@@ -9,6 +9,7 @@ import { SearchPage } from '@/components/pages/search-page'
 import { TutorProfilePage } from '@/components/pages/tutor-profile-page'
 import { AuthPage } from '@/components/pages/auth-page'
 import { DashboardPage } from '@/components/pages/dashboard-page'
+import { AdminDashboardPage } from '@/components/pages/admin-dashboard-page'
 import { ProfileEditPage } from '@/components/pages/profile-edit-page'
 import { OnboardingPage } from '@/components/pages/onboarding-page'
 import { MessagesPage } from '@/components/pages/messages-page'
@@ -56,7 +57,7 @@ export default function Home() {
       case 'tutor': return <TutorProfilePage id={activeView.id} />
       case 'login': return <AuthPage initialMode="login" />
       case 'register': return <AuthPage initialMode="register" />
-      case 'dashboard': return <DashboardPage />
+      case 'dashboard': return user?.role === 'ADMIN' ? <AdminDashboardPage /> : <DashboardPage />
       case 'profile-edit': return <ProfileEditPage />
       case 'onboarding': return <OnboardingPage />
       // View cũ (tương thích URL) — dashboard tự chuyển hướng vào tab tương ứng

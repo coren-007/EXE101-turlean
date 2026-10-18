@@ -11,6 +11,7 @@
 // - Dời/nghỉ từng buổi → PATCH đúng 1 session, không ảnh hưởng lớp
 
 import { db } from './db'
+import { Prisma } from '@prisma/client'
 import { CLASS_DAY_NAMES } from './format'
 
 // Cấu hình rolling schedule
@@ -329,9 +330,13 @@ export async function checkSessionReschedule(
  * Waitlist: tự động chuyển học sinh chờ (WAITLIST) vào lớp (APPROVED) theo thứ tự
  * đăng ký khi có chỗ trống. Trả về danh sách enrollment đã được chuyển.
  * NGƯỜI GỌI chịu trách nhiệm gửi thông báo cho từng học sinh được chuyển.
+ *
+ * SẬ-ENR (audit CAO): nhận transaction client tùy chọn — khi gọi từ route đã mở
+ * transaction, việc đếm sĩ số + update chạy chung transaction đó (đếm-đổi trong
+ * cùng 1 khối ghi) → hai thao tác duyệt song song không còn vượt capacity.
  */
-export async function promoteWaitlist(classId: string) {
-  const cls = await db.groupClass.findUnique({
+export async function promoteWaitlist(classId: string, tx: Prisma.TransactionClient = db) {
+  const cls = await tx.groupClass.findUnique({
     where: { id: classId },
     include: {
       enrollments: { include: { studentParent: { select: { id: true, name: true } } } },
@@ -350,7 +355,7 @@ export async function promoteWaitlist(classId: string) {
   const promoted: PromotedEnrollment[] = []
   for (const w of waiting) {
     if (approved >= cls.capacity) break
-    await db.classEnrollment.update({
+    await tx.classEnrollment.update({
       where: { id: w.id },
       data: { status: 'APPROVED', updatedAt: new Date() },
     })

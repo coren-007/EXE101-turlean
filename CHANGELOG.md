@@ -2,6 +2,60 @@
 
 Mọi thay đổi đáng chú ý của dự án GiaSuConnect (Turlean).
 
+## [1.3.1] — 2026-10-18
+
+Audit bảo mật — sửa 8 phát hiện theo thứ tự ưu tiên (1 NGUY HIỂM · 4 CAO · 3 TRUNG BÌNH), từng mục đã kiểm chứng động.
+
+### Nổi bật
+
+- **[NGUY HIỂM] Ngày nghỉ lễ chỉ còn ADMIN được thêm/xóa**: trước đây BẤT KỲ gia sư nào cũng thêm được ngày nghỉ toàn hệ thống → tự hủy mọi buổi của MỌI gia sư + spam thông báo hàng loạt. Giờ: gia sư xem read-only (biết ngày nào nghỉ để lập lịch), admin quản lý qua nút "Ngày nghỉ lễ" mới trên trang quản trị.
+- **[CAO] Đóng 2 race condition bằng interactive transaction**:
+  - Đặt lịch 1-1: check xung đột + tạo booking cùng chạy trong 1 transaction — 2 request song song cùng khung giờ giờ đây chỉ 1 thắng (200), 1 bị chặn (400), không còn double-booking.
+  - Duyệt đăng ký lớp nhóm: đếm sĩ số + update + promote waitlist trong 1 transaction — 2 lần duyệt song song không còn vượt capacity.
+- **[CAO] Hết lộ lỗi nội bộ**: login/register trả thông điệp chung tiếng Việt (lỗi thật chỉ log server-side); search suggest bỏ trường `debug` chứa lỗi thô.
+- **[CAO] Rate limit lần đầu xuất hiện** (in-memory sliding window, mỗi tiến trình — sẵn sàng đổi sang Redis khi scale): login 10 lần/5 phút/(IP+email) · register 20 lần/giờ/IP · booking 30 lần/giờ/tài khoản · hủy 20 lần/giờ · suggest public 60 lần/phút/IP. Kèm header `Retry-After`.
+- **[TRUNG BÌNH] Máy trạng thái booking**: PATCH ép đúng đường đi PENDING→CONFIRMED→COMPLETED (không nhảy thẳng); update có điều kiện chống 2 request cùng đổi trạng thái (409).
+- **[TRUNG BÌNH] Hủy lịch idempotent hoàn toàn**: hủy tuần tự lần 2 → 400; hủy song song 2 request → đúng 1 bản ghi trừ điểm (updateMany điều kiện trong transaction).
+- **[TRUNG BÌNH] Thu hẹp dữ liệu cá nhân**: địa chỉ nhà gia sư giờ gate như SĐT (chỉ hiện với người có booking hoạt động / chính chủ); booking ĐÃ HỦY ẩn SĐT + địa chỉ cả 2 bên trong GET /api/bookings.
+- **[TRUNG BÌNH] XSS popup bản đồ**: HTML popup Leaflet giờ escape toàn bộ (tên/nghề/quận/thành) — tên gia sư chứa `<img onerror=...>` không chạy script nữa.
+
+### Chi tiết kỹ thuật
+
+- Mới: `src/lib/rate-limit.ts` (sliding window + `clientIp` từ `x-forwarded-for`). Áp dụng vào 5 route nhạy cảm; các route từ chối sớm (401/403) không tốn quota người khác.
+- `api/holidays` + `api/holidays/[id]`: đổi gate `TUTOR` → `ADMIN`; UI `holidays-dialog.tsx` nhận biết role (gia sư read-only + note giải thích); admin dashboard thêm nút quản lý.
+- `api/bookings` POST: toàn bộ vòng check từng tuần (lớp cố định + gia sư bận + học sinh bận) + `tx.booking.create` gom vào 1 `$transaction` — SQLite ghi serialize tự đóng cửa sổ race; khi deploy PostgreSQL nên nâng `isolationLevel: Serializable` nếu cần chặt tuyệt đối. Sandbox đã bật `journal_mode=WAL` cho DB SQLite (đọc song song ghi).
+- `api/bookings/[id]/cancel`: transaction `updateMany({ status: in: [PENDING, CONFIRMED] })` → chỉ tạo bản ghi Cancellation khi count > 0.
+- `api/classes/[id]/enrollments/[enrollmentId]`: đếm-đổi trong transaction; `promoteWaitlist(classId, tx?)` nhận transaction client; thông báo nằm ngoài transaction để không giữ khóa DB.
+- `api/auth/*`: catch → `console.error` server-side + thông điệp chung; lỗi zod map sang tiếng Việt (không trả issues thô).
+- `api/search/suggest`: bỏ `debug: String(e)`.
+- `api/tutors/[id]`: `address` null với người xem ẩn danh (district/city + lat/lng vẫn công khai cho bản đồ); UI profile hiển thị fallback "Khu vực: …, địa chỉ chi tiết hiển thị sau khi đặt lịch".
+- `tutor-map.tsx`: `escapeHtml` + `tutorPopupHtml` cho cả 2 đường bindPopup (fallback + cluster).
+- Kiểm chứng: bộ mới `scripts/test_security_after_fix.py` — **36/36 PASS** (verify động từng fix trên dev server, tự dọn DB demo sau chạy) + hồi quy phase3 45 · phase4 30 · phase5 26 · phase6 60 · booking 46 · repeatweeks 33 = **276/276 PASS** · typecheck 0 lỗi · lint 0 lỗi · E2E browser: admin quản lý ngày lễ, gia sư read-only, popup bản đồ render đúng sau escape.
+- Ghi chú vận hành: rate limit in-memory reset khi restart tiến trình (chấp nhận cho 1 node; scale nhiều instance → chuyển Redis/Upstash giữ nguyên interface `checkRateLimit`).
+
+## [1.3.0] — 2026-10-17
+
+Phase 6 — Trust & Admin: xác minh bằng cấp THẬT + trang quản trị + tự khóa tài khoản hay hủy lịch.
+
+### Nổi bật
+
+- **Xác minh bằng cấp thật (thay cho flag DB)**: gia sư upload ảnh/PDF bằng cấp (≤ 5MB, lưu trong DB — chạy được cả SQLite lẫn PostgreSQL không cần dịch vụ file ngoài) → **admin duyệt/từ chối kèm lý do** → badge "Đã xác minh" trên hồ sơ & tìm kiếm giờ do con người xác nhận, không còn seed giả.
+  - Tab "Xác minh" mới trong Tutor Studio: 3 loại giấy tờ (Bằng cấp/Chứng chỉ/Giấy tờ tùy thân), kéo-thả tệp, ghi chú, rút lại yêu cầu đang chờ, xem lý do bị từ chối để gửi lại.
+  - Chặn trùng: mỗi loại chỉ 1 yêu cầu PENDING; từ chối phải kèm lý do ≥ 5 ký tự (gia sư biết phải gửi lại thế nào).
+- **Trang quản trị** (role ADMIN, tài khoản `admin@turlean.vn` — không đăng ký công khai được): 3 tab — Tổng quan (stats toàn hệ thống + bảng 10 gia sư điểm tin cậy thấp nhất), Duyệt xác minh (xem file ảnh/PDF ngay trong dialog, duyệt/từ chối), Tài khoản khóa (mở khóa có xác nhận).
+- **Tự khóa tài khoản khi độ tin cậy < 30/100** (mỗi lần hủy lịch bị trừ điểm đều kiểm tra lại): không đăng nhập được (kèm lý do rõ ràng), session cũ chết NGAY trên mọi API, admin mở khóa được (điểm giữ nguyên — nếu tiếp tục hủy sát giờ sẽ tự khóa lại).
+- Phản hồi hủy lịch mới nói rõ "tài khoản đã bị KHÓA" ngay tại lúc trừ điểm xuyên ngưỡng.
+
+### Chi tiết kỹ thuật
+
+- Schema: `User.lockedAt/lockedReason` + model `VerificationRequest` (fileData Bytes, index status+createdAt) — migration `20261017000000_phase6_admin_verification_lock` (PostgreSQL; sandbox dev dùng `prisma db push`).
+- Bảo mật 2 tầng: login chặn + `getCurrentUser()` trả null cho tài khoản khóa (mọi API tự động 401).
+- Phân quyền chặt: `requireAuth('ADMIN')`; register zod chỉ TUTOR|STUDENT (không thể tự tạo admin); file verification chỉ admin đọc được (cookie session — link không chia sẻ được); response JSON không bao giờ chứa fileData.
+- API mới: `GET/POST/DELETE /api/tutors/me/verification` · `GET /api/admin/stats` · `GET /api/admin/verification` · `GET /api/admin/verification/[id]/file` · `POST /api/admin/verification/[id]/review` · `GET /api/admin/users?locked=1` · `POST /api/admin/users/[id]/unlock`.
+- Hủy lịch (cancel route): gọi `applyAutoLockIfNeeded` best-effort sau transaction chính — lỗi auto-lock không làm fail việc hủy.
+- Seed: thêm admin + 4 yêu cầu demo (2 chờ duyệt / 1 đã duyệt / 1 bị từ chối kèm lý do).
+- Kiểm chứng: **60/60 test phase 6 mới** (phân quyền, upload, duyệt/từ chối, auto-lock, unlock, idempotent) + hồi quy toàn bộ 188 test cũ = **248/248 PASS** · typecheck 0 lỗi · lint 0 lỗi · production build 26+7 route · E2E browser admin (login → duyệt → badge xác minh thật) + gia sư (upload → rút lại) · prod hydration sạch trên deep-link.
+
 ## [1.2.1] — 2026-10-13
 
 Gắn Google Form đánh giá sản phẩm — thu phản hồi người dùng bản deploy.

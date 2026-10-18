@@ -628,7 +628,9 @@ export function TutorProfilePage({ id }: { id: string }) {
                     <span className="font-semibold">Học tại cơ sở</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Địa chỉ: {tutor.address}, {tutor.district}
+                    {tutor.address
+                      ? <>Địa chỉ: {tutor.address}, {tutor.district}</>
+                      : <>Khu vực: {tutor.district}{tutor.city ? ', ' + tutor.city : ''} — địa chỉ chi tiết hiển thị sau khi đặt lịch</>}
                   </p>
                 </div>
               )}
@@ -1139,7 +1141,9 @@ export function TutorProfilePage({ id }: { id: string }) {
                           <span className="font-semibold text-sm">Đến cơ sở gia sư</span>
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                          {tutor.address}, {tutor.district}
+                          {tutor.address
+                            ? <>{tutor.address}, {tutor.district}</>
+                            : <>{tutor.district}{tutor.city ? ', ' + tutor.city : ''}</>}
                         </p>
                       </div>
                     </div>

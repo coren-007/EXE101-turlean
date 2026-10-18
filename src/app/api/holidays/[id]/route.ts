@@ -1,4 +1,4 @@
-// DELETE /api/holidays/[id] — xóa ngày nghỉ lễ (gia sư).
+// DELETE /api/holidays/[id] — xóa ngày nghỉ lễ (CHỈ ADMIN — SẬ-HOL, xem route.ts).
 // Các buổi đã bị hủy theo ngày lễ này KHÔNG tự khôi phục (gia sư chủ động dời/dạy bù
 // từng buổi nếu cần) — sinh buổi mới sau này sẽ không còn bị chặn bởi ngày lễ này.
 import { NextRequest, NextResponse } from 'next/server'
@@ -12,8 +12,11 @@ export async function DELETE(
 ) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
-  if (user.role !== 'TUTOR') {
-    return NextResponse.json({ error: 'Chỉ gia sư mới được xóa ngày nghỉ lễ' }, { status: 403 })
+  if (user.role !== 'ADMIN') {
+    return NextResponse.json(
+      { error: 'Chỉ quản trị viên mới được xóa ngày nghỉ lễ toàn hệ thống' },
+      { status: 403 },
+    )
   }
 
   const { id } = await params

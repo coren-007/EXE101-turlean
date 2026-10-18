@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
 import { notifyTutorNewBooking, notifyStudentConfirmed, notifyStudentCompleted } from '@/lib/notify'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -53,7 +54,20 @@ export async function GET(req: NextRequest) {
     orderBy: { date: 'desc' },
   })
 
-  return NextResponse.json({ bookings })
+  // SẬ-BK2 (audit TB): booking ĐÃ HỦY → ẩn SĐT/địa chỉ/tọa độ của CẢ hai bên.
+  // P0-3 quy định liên hệ chỉ dành cho booking còn hiệu lực — lịch đã hủy không
+  // còn lý do hiển thị số cá nhân (trước đây API trả đủ phone/address kể cả CANCELLED).
+  const sanitized = bookings.map(b =>
+    b.status === 'CANCELLED'
+      ? {
+          ...b,
+          tutor: { ...b.tutor, phone: null, address: null, lat: null, lng: null },
+          student: { ...b.student, phone: null, address: null, lat: null, lng: null },
+        }
+      : b,
+  )
+
+  return NextResponse.json({ bookings: sanitized })
 }
 
 function toMinutes(t: string): number {
@@ -84,6 +98,15 @@ export async function POST(req: NextRequest) {
   }
   if (user.role !== 'STUDENT') {
     return NextResponse.json({ error: 'Chỉ học sinh/phụ huynh mới được đặt lịch' }, { status: 403 })
+  }
+
+  // SẬ-RL: chặn spam đặt lịch — 30 booking / giờ / tài khoản (cả Series 12 tuần)
+  const rl = checkRateLimit(`booking:${user.id}`, 30, 3_600_000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: `Bạn đã đặt quá nhiều lịch trong giờ này. Vui lòng thử lại sau ${Math.ceil(rl.retryAfterSec / 60)} phút.` },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
   }
 
   // Validate body với zod (P0-5: không còn tin client tự khai)
@@ -163,51 +186,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Giờ đặt không nằm trong lịch trống của gia sư' }, { status: 400 })
   }
 
-  // Chặn đặt 1-1 trùng LỚP HỌC CỐ ĐỊNH (nhóm) của gia sư — lớp OPEN/PAUSED vẫn đang diễn ra,
-  // CLOSED mới kết thúc. Kiểm tra theo từng ngày của khóa định kỳ bên dưới.
-  // Kiểm tra CẢ: (a) mẫu lịch tuần (slot) và (b) buổi ClassSession thực tế đã DỜI
-  // khỏi mẫu tuần (dạy bù) — đảm bảo không bao giờ chồng chéo sau khi dời buổi.
-  const classConflictFor = async (d: string) => {
-    const dow = new Date(`${d}T00:00`).getDay()
-    const slots = await db.classScheduleSlot.findMany({
-      where: {
-        dayOfWeek: dow,
-        class: { tutorId, status: { in: ['OPEN', 'PAUSED'] } },
-      },
-      include: { class: { select: { title: true } } },
-    })
-    const slotHit = slots.find(
-      s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
-    )
-    if (slotHit) return slotHit
-
-    // Buổi cụ thể cùng ngày (bao gồm buổi đã dời ngày — không còn theo mẫu tuần)
-    const daySessions = await db.classSession.findMany({
-      where: {
-        date: d,
-        status: { in: ['SCHEDULED', 'COMPLETED'] },
-        class: { tutorId, status: { in: ['OPEN', 'PAUSED'] } },
-      },
-      include: { class: { select: { title: true } } },
-    })
-    return daySessions.find(
-      s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
-    )
-  }
-
-  // Conflict check cho GIA SƯ / HỌC SINH (P1: chống double-booking 2 chiều, theo từng ngày)
-  const conflictFor = async (d: string, who: 'tutor' | 'student') =>
-    db.booking.findFirst({
-      where: {
-        [who === 'tutor' ? 'tutorId' : 'studentId']: who === 'tutor' ? tutorId : user.id,
-        date: d,
-        status: { in: ['PENDING', 'CONFIRMED'] },
-        AND: [
-          { startTime: { lt: endTime } },
-          { endTime: { gt: startTime } },
-        ],
-      },
-    })
+  // SẬ-BK1 (audit CAO — race condition): hai hàm check xung đột + việc tạo booking
+  // cùng chạy trong 1 interactive transaction (đoạn bên dưới). Trước đây check chạy
+  // TÁCH RỜI transaction → 2 request song song cùng khung giờ cùng vượt qua check rồi
+  // cùng insert (double-booking).
 
   // Server tự tính tiền từ giá môn học × thời lượng thực (P0-6)
   const totalAmount = Math.round(ts.pricePerHour * durationHours)
@@ -220,49 +202,94 @@ export async function POST(req: NextRequest) {
   // hợp lệ — khi đó trả về thông điệp cụ thể của tuần đầu tiên (giữ chất lượng thông báo
   // như hành vi cũ của buổi lẻ: user biết ngay phải đổi khung giờ nào).
   const skipped: { date: string; reason: string }[] = []
-  const validDates: string[] = []
-  let firstBlockMessage: string | null = null // thông điệp đầy đủ của tuần ĐẦU bị chặn
-  for (let i = 0; i < weeks; i++) {
-    const d = addWeeks(date, i)
-    const cc = await classConflictFor(d)
-    if (cc) {
-      skipped.push({ date: d, reason: `Trùng lớp cố định "${cc.class.title}"` })
-      if (i === 0) {
-        firstBlockMessage = `Trùng lịch lớp học cố định "${cc.class.title}" (${cc.startTime}–${cc.endTime})`
-      }
-    } else if (await conflictFor(d, 'tutor')) {
-      skipped.push({ date: d, reason: 'Gia sư bận khung giờ này' })
-      if (i === 0) {
-        firstBlockMessage = 'Gia sư đã có lịch vào khung giờ này'
-      }
-    } else if (await conflictFor(d, 'student')) {
-      skipped.push({ date: d, reason: 'Bạn có lịch học trùng giờ' })
-      if (i === 0) {
-        firstBlockMessage = 'Bạn đã có lịch học vào khung giờ này'
-      }
-    } else {
-      validDates.push(d)
+  const result = await db.$transaction(async (tx) => {
+    // Chặn đặt 1-1 trùng LỚP HỌC CỐ ĐỊNH (nhóm) của gia sư — lớp OPEN/PAUSED vẫn đang diễn ra,
+    // CLOSED mới kết thúc. Kiểm tra CẢ: (a) mẫu lịch tuần (slot) và (b) buổi ClassSession
+    // thực tế đã DỜI khỏi mẫu tuần (dạy bù) — đảm bảo không bao giờ chồng chéo sau khi dời buổi.
+    const classConflictFor = async (d: string) => {
+      const dow = new Date(`${d}T00:00`).getDay()
+      const slots = await tx.classScheduleSlot.findMany({
+        where: {
+          dayOfWeek: dow,
+          class: { tutorId, status: { in: ['OPEN', 'PAUSED'] } },
+        },
+        include: { class: { select: { title: true } } },
+      })
+      const slotHit = slots.find(
+        s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
+      )
+      if (slotHit) return slotHit
+
+      // Buổi cụ thể cùng ngày (bao gồm buổi đã dời ngày — không còn theo mẫu tuần)
+      const daySessions = await tx.classSession.findMany({
+        where: {
+          date: d,
+          status: { in: ['SCHEDULED', 'COMPLETED'] },
+          class: { tutorId, status: { in: ['OPEN', 'PAUSED'] } },
+        },
+        include: { class: { select: { title: true } } },
+      })
+      return daySessions.find(
+        s => startMin < toMinutes(s.endTime) && endMin > toMinutes(s.startTime),
+      )
     }
-  }
 
-  // Mọi tuần đều trùng lịch → chặn kèm lý do cụ thể của tuần đầu
-  if (validDates.length === 0) {
-    return NextResponse.json(
-      {
+    // Conflict check cho GIA SƯ / HỌC SINH (P1: chống double-booking 2 chiều, theo từng ngày)
+    const conflictFor = (d: string, who: 'tutor' | 'student') =>
+      tx.booking.findFirst({
+        where: {
+          [who === 'tutor' ? 'tutorId' : 'studentId']: who === 'tutor' ? tutorId : user.id,
+          date: d,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+          AND: [
+            { startTime: { lt: endTime } },
+            { endTime: { gt: startTime } },
+          ],
+        },
+      })
+
+    const validDates: string[] = []
+    let firstBlockMessage: string | null = null // thông điệp đầy đủ của tuần ĐẦU bị chặn
+    for (let i = 0; i < weeks; i++) {
+      const d = addWeeks(date, i)
+      const cc = await classConflictFor(d)
+      if (cc) {
+        skipped.push({ date: d, reason: `Trùng lớp cố định "${cc.class.title}"` })
+        if (i === 0) {
+          firstBlockMessage = `Trùng lịch lớp học cố định "${cc.class.title}" (${cc.startTime}–${cc.endTime})`
+        }
+      } else if (await conflictFor(d, 'tutor')) {
+        skipped.push({ date: d, reason: 'Gia sư bận khung giờ này' })
+        if (i === 0) {
+          firstBlockMessage = 'Gia sư đã có lịch vào khung giờ này'
+        }
+      } else if (await conflictFor(d, 'student')) {
+        skipped.push({ date: d, reason: 'Bạn có lịch học trùng giờ' })
+        if (i === 0) {
+          firstBlockMessage = 'Bạn đã có lịch học vào khung giờ này'
+        }
+      } else {
+        validDates.push(d)
+      }
+    }
+
+    // Mọi tuần đều trùng lịch → chặn kèm lý do cụ thể của tuần đầu
+    if (validDates.length === 0) {
+      return {
+        ok: false as const,
         error: `${firstBlockMessage ?? 'Tất cả các tuần đều trùng lịch'} (${fmtDateVi(date)}). Vui lòng chọn khung giờ khác.`,
-      },
-      { status: 400 },
-    )
-  }
+      }
+    }
 
-  // Các buổi cùng khóa chia sẻ seriesId (>= 2 buổi mới là khóa)
-  const seriesId = validDates.length > 1 ? crypto.randomUUID() : null
-  const seriesTotal = seriesId ? validDates.length : null
+    // Các buổi cùng khóa chia sẻ seriesId (>= 2 buổi mới là khóa)
+    const seriesId = validDates.length > 1 ? crypto.randomUUID() : null
+    const seriesTotal = seriesId ? validDates.length : null
 
-  // Tạo tất cả buổi trong 1 transaction — đảm bảo tính toàn vẹn của khóa học
-  const created = await db.$transaction(
-    validDates.map(d =>
-      db.booking.create({
+    // Tạo tất cả buổi TRONG CÙNG transaction với phần check ở trên (SẬ-BK1) —
+    // đảm bảo tính toàn vẹn của khóa học VÀ đóng cửa sổ race double-booking.
+    const created: { id: string; date: string }[] = []
+    for (const d of validDates) {
+      const b = await tx.booking.create({
         data: {
           studentId: user.id,
           tutorId,
@@ -281,9 +308,17 @@ export async function POST(req: NextRequest) {
           seriesId,
           seriesTotal,
         },
-      }),
-    ),
-  )
+      })
+      created.push({ id: b.id, date: b.date })
+    }
+    return { ok: true as const, created, seriesId, seriesTotal }
+  })
+
+  // Mọi tuần đều trùng lịch → chặn kèm lý do cụ thể của tuần đầu
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: 400 })
+  }
+  const { created, seriesId, seriesTotal } = result
 
   const first = await db.booking.findUnique({
     where: { id: created[0].id },
@@ -369,6 +404,16 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: `Không thể thay đổi trạng thái (hiện tại: ${booking.status})` }, { status: 400 })
   }
 
+  // SẬ-BK3 (audit TB — máy trạng thái): ép đúng đường đi PENDING→CONFIRMED→COMPLETED.
+  // Trước đây chỉ check trạng thái đích (không check nguồn) nên gia sư có thể nhảy
+  // thẳng PENDING→COMPLETED — bỏ qua bước xác nhận, sai quy trình vận hành.
+  if (status === 'CONFIRMED' && booking.status !== 'PENDING') {
+    return NextResponse.json({ error: 'Chỉ xác nhận được buổi đang chờ (PENDING)' }, { status: 400 })
+  }
+  if (status === 'COMPLETED' && booking.status !== 'CONFIRMED') {
+    return NextResponse.json({ error: 'Chỉ đánh dấu hoàn thành buổi đã được xác nhận (CONFIRMED). Hãy xác nhận buổi học trước.' }, { status: 400 })
+  }
+
   // P0-2: COMPLETED chỉ được đánh dấu SAU giờ bắt đầu buổi học (trước đây logic đảo ngược)
   if (status === 'COMPLETED') {
     const classStart = new Date(`${booking.date}T${booking.startTime}`)
@@ -388,10 +433,22 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  const updated = await db.booking.update({
-    where: { id: bookingId },
+  // SẬ-BK3: update CÓ ĐIỀU KIỆN theo trạng thái nguồn — 2 request song song cùng đổi
+  // trạng thái 1 booking thì chỉ 1 request thắng (request sau nhận 409, tải lại sẽ thấy)
+  const upd = await db.booking.updateMany({
+    where: { id: bookingId, status: booking.status },
     data: { status },
   })
+  if (upd.count === 0) {
+    return NextResponse.json(
+      { error: 'Trạng thái buổi học vừa thay đổi — vui lòng tải lại trang' },
+      { status: 409 },
+    )
+  }
+  const updated = await db.booking.findUnique({ where: { id: bookingId } })
+  if (!updated) {
+    return NextResponse.json({ error: 'Không tìm thấy lịch đặt' }, { status: 404 })
+  }
 
   // Mục đích 1 & 2: báo cho học sinh biết buổi học đã được xác nhận / hoàn thành
   if (status === 'CONFIRMED' || status === 'COMPLETED') {

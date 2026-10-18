@@ -1,8 +1,12 @@
 // /api/holidays — NGÀY NGHỈ LỄ toàn hệ thống.
 //  GET    → danh sách ngày lễ (từ hôm nay trở đi) — mọi người đăng nhập đều xem được
 //           (hiển thị trên lịch tuần/tháng)
-//  POST   → thêm ngày lễ (gia sư) — tự động HỦY các buổi SCHEDULED tương lai trúng
+//  POST   → thêm ngày lễ (CHỈ ADMIN) — tự động HỦY các buổi SCHEDULED tương lai trúng
 //           ngày (trừ buổi dạy bù) + gửi thông báo nghỉ lễ cho học sinh các lớp affected
+//
+// SẬ-HOL (audit NGUY HIỂM): trước đây POST chỉ yêu cầu role TUTOR — tức BẤT KỲ gia sư nào
+// cũng thêm được ngày nghỉ toàn hệ thống, tự hủy mọi buổi của MỌI gia sư + spam thông báo
+// hàng loạt. Ngày nghỉ lễ là dữ liệu hệ thống → chỉ ADMIN được ghi.
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -38,8 +42,11 @@ export async function GET(_req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser()
   if (!user) return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
-  if (user.role !== 'TUTOR') {
-    return NextResponse.json({ error: 'Chỉ gia sư mới được thêm ngày nghỉ lễ' }, { status: 403 })
+  if (user.role !== 'ADMIN') {
+    return NextResponse.json(
+      { error: 'Chỉ quản trị viên mới được thêm ngày nghỉ lễ toàn hệ thống' },
+      { status: 403 },
+    )
   }
 
   const raw = await req.json().catch(() => null)

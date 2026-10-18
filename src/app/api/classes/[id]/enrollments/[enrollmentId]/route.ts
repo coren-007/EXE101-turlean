@@ -79,24 +79,44 @@ export async function PATCH(
     }
   }
 
-  // Duyệt vào lớp: sĩ số đã duyệt (không tính mình) phải còn chỗ
-  if (status === 'APPROVED') {
-    const others = await db.classEnrollment.findMany({
-      where: { classId: id, status: 'APPROVED' },
-      select: { id: true },
-    })
-    if (others.length >= cls.capacity) {
-      return NextResponse.json(
-        { error: `Lớp đã đủ sĩ số (${cls.capacity}/${cls.capacity}) — không thể duyệt thêm` },
-        { status: 400 },
-      )
+  // SẬ-ENR (audit CAO — race condition sĩ số): trước đây việc ĐẾM sĩ số chạy TÁCH RỜI
+  // với UPDATE → 2 request duyệt song song cùng thấy "còn chỗ" rồi cùng chuyển
+  // APPROVED → vượt capacity. Giờ: đếm + update + promote waitlist cùng chạy trong
+  // 1 interactive transaction (đếm-đổi đồng bộ). Thông báo nằm NGOÀI transaction
+  // để không giữ khóa DB trong lúc ghi Notification.
+  const result = await db.$transaction(async (tx) => {
+    // Duyệt vào lớp: sĩ số đã duyệt (không tính mình) phải còn chỗ
+    if (status === 'APPROVED') {
+      const others = await tx.classEnrollment.findMany({
+        where: { classId: id, status: 'APPROVED' },
+        select: { id: true },
+      })
+      if (others.length >= cls.capacity) {
+        return {
+          ok: false as const,
+          error: `Lớp đã đủ sĩ số (${cls.capacity}/${cls.capacity}) — không thể duyệt thêm`,
+        }
+      }
     }
-  }
 
-  const updated = await db.classEnrollment.update({
-    where: { id: enrollmentId },
-    data: { status, updatedAt: new Date() },
+    const updated = await tx.classEnrollment.update({
+      where: { id: enrollmentId },
+      data: { status, updatedAt: new Date() },
+    })
+
+    // ---- Học sinh APPROVED rời lớp → TỰ ĐỘNG chuyển người chờ đầu tiên vào lớp ----
+    let plist: Awaited<ReturnType<typeof promoteWaitlist>>['promoted'] = []
+    if (status === 'CANCELLED' && enrollment.status === 'APPROVED') {
+      const r = await promoteWaitlist(id, tx)
+      plist = r.promoted
+    }
+    return { ok: true as const, updated, plist }
   })
+
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: 400 })
+  }
+  const { updated, plist } = result
 
   // ---- Thông báo cho bên kia (best-effort) ----
   const studentName = enrollment.studentName ?? enrollment.studentParent.name
@@ -132,29 +152,26 @@ export async function PATCH(
     })
   }
 
-  // ---- Học sinh APPROVED rời lớp → TỰ ĐỘNG chuyển người chờ đầu tiên vào lớp ----
-  let promoted: { id: string; name: string }[] = []
-  if (status === 'CANCELLED' && enrollment.status === 'APPROVED') {
-    const { cls: fresh, promoted: plist } = await promoteWaitlist(id)
-    promoted = plist.map(p => ({
-      id: p.studentParent.id,
-      name: p.studentName ?? p.studentParent.name,
-    }))
-    if (fresh) {
-      for (const p of plist) {
-        await notifyStudentWaitlistPromoted({
-          tutorId: fresh.tutorId,
-          studentId: p.studentParent.id,
-          tutorName: fresh.tutor.name,
-          studentName: p.studentName ?? p.studentParent.name,
-          classTitle: fresh.title,
-          schedule: formatClassSchedule(fresh.schedule),
-          address: fresh.address,
-          monthlyFee: fresh.monthlyFee,
-        }).catch(() => {})
-      }
+  // ---- Học sinh APPROVED rời lớp → thông báo cho người được thăng cấp từ danh sách chờ ----
+  // (promote đã chạy bên trong transaction ở trên — đây chỉ là phần thông báo)
+  if (plist.length > 0) {
+    for (const p of plist) {
+      await notifyStudentWaitlistPromoted({
+        tutorId: cls.tutorId,
+        studentId: p.studentParent.id,
+        tutorName: cls.tutor.name,
+        studentName: p.studentName ?? p.studentParent.name,
+        classTitle: cls.title,
+        schedule,
+        address: cls.address,
+        monthlyFee: cls.monthlyFee,
+      }).catch(() => {})
     }
   }
+  const promoted = plist.map(p => ({
+    id: p.studentParent.id,
+    name: p.studentName ?? p.studentParent.name,
+  }))
 
   return NextResponse.json({
     ...updated,

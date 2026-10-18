@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { normalizeVi } from '@/lib/text'
+import { checkRateLimit, clientIp } from '@/lib/rate-limit'
 
 interface CacheEntry {
   at: number
@@ -77,6 +78,15 @@ function stripNorm(s: { id: string; name: string; slug: string; category: string
 }
 
 export async function GET(req: NextRequest) {
+  // SẬ-RL: route public — rate limit 60 lần / phút / IP để không bị dọp quét toàn bộ index
+  const rl = checkRateLimit(`suggest:${clientIp(req)}`, 60, 60_000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { subjects: [], tutors: [], popular: false },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
+
   try {
     const q = (new URL(req.url).searchParams.get('q') ?? '').trim()
     const norm = normalizeVi(q)
@@ -108,7 +118,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ subjects, tutors, popular: false })
   } catch (e) {
+    // SẬ-SUG (audit CAO): KHÔNG trả trường debug lỗi thô ra client — chỉ log server-side,
+    // client nhận danh sách rỗng như trạng thái "không có gợi ý" (an toàn + không lộ nội bộ).
     console.error('[suggest] error:', e)
-    return NextResponse.json({ subjects: [], tutors: [], popular: false, debug: String(e) })
+    return NextResponse.json({ subjects: [], tutors: [], popular: false })
   }
 }
