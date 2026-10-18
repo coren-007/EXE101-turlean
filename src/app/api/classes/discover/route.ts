@@ -5,8 +5,11 @@
 // Filter: q (tên lớp / môn / tên gia sư), city, day (0-6), meetingType, subject (slug),
 // sort: next (buổi gần nhất) | fee_asc | fee_desc | seats (còn nhiều chỗ)
 // Chỉ trả lớp OPEN đang tuyển, kèm buổi học tới + sĩ số + danh sách chờ.
+// SẸ-TUT2 (B1): địa chỉ lớp (AT_TUTOR_HOME = nhà gia sư — PII) chỉ trả cho
+//   chính gia sư chủ lớp hoặc học sinh đã APPROVED; người khác nhận null.
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
@@ -39,7 +42,7 @@ export async function GET(req: NextRequest) {
           district: true, city: true, isVerified: true,
         },
       },
-      enrollments: { select: { status: true } },
+      enrollments: { select: { status: true, studentParentId: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -79,10 +82,18 @@ export async function GET(req: NextRequest) {
     upcomingCountByClass.set(s.classId, (upcomingCountByClass.get(s.classId) ?? 0) + 1)
   }
 
+  // SẸ-TUT2 (B1): người xem hiện tại (đã đăng nhập) — nếu là chủ lớp hoặc
+  // học sinh đã APPROVED thì được xem địa chỉ chính xác
+  const viewer = await getCurrentUser()
+
   let result = classes.map(c => {
     const approved = c.enrollments.filter(e => e.status === 'APPROVED').length
     const waitlist = c.enrollments.filter(e => e.status === 'WAITLIST').length
     const rating = ratingByTutor.get(c.tutorId) ?? { avg: 0, count: 0 }
+    const maySeeAddress = viewer
+      ? viewer.id === c.tutorId
+        || c.enrollments.some(e => e.studentParentId === viewer.id && e.status === 'APPROVED')
+      : false
     return {
       id: c.id,
       tutorId: c.tutorId,
@@ -91,7 +102,7 @@ export async function GET(req: NextRequest) {
       gradeLevel: c.gradeLevel,
       description: c.description,
       meetingType: c.meetingType,
-      address: c.address,
+      address: maySeeAddress ? c.address : null, // SẸ-TUT2 (B1)
       capacity: c.capacity,
       monthlyFee: c.monthlyFee,
       startDate: c.startDate,

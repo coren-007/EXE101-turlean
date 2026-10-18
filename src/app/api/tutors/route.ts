@@ -1,3 +1,4 @@
+// src/app/api/tutors/route.ts
 // GET /api/tutors — tìm kiếm gia sư
 // P1: search case-insensitive (tương thích SQLite & PostgreSQL)
 // P1: phân trang (page/pageSize) + trả total
@@ -6,6 +7,11 @@
 // P5: ids=a,b,c — lấy đúng bộ gia sư theo thứ tự (cho "Xem gần đây" / gợi ý)
 // P5: availDay + availSlot — lọc gia sư rảnh theo khung giờ dạy trong tuần
 // P5: verified=true — chỉ gia sư đã xác minh
+// SẬ-TUT2 (B1): KHÔNG trả `address` (địa chỉ nhà = PII) ở endpoint danh sách
+//   công khai này — đã verify bằng request ẩn danh thật. Địa chỉ chính xác chỉ
+//   có tại /api/tutors/[id] với điều kiện SẬ-TUT (chính gia sư / booking hoạt
+//   động). Danh sách chỉ cần district/city + lat/lng (điểm marker bản đồ,
+//   thông lệ Airbnb-style).
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
@@ -35,7 +41,6 @@ function toTutorDto(t: {
   profession: string | null
   district: string | null
   city: string | null
-  address: string | null
   lat: number | null
   lng: number | null
   hourlyRate: number | null
@@ -60,7 +65,7 @@ function toTutorDto(t: {
     profession: t.profession,
     district: t.district,
     city: t.city,
-    address: t.address,
+    // SẬ-TUT2 (B1): không trả address — xem comment đầu file
     lat: t.lat,
     lng: t.lng,
     hourlyRate: t.hourlyRate,

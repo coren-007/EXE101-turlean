@@ -1,6 +1,9 @@
 // GET  /api/classes?tutorId=... — lớp học cố định (nhóm) công khai của một gia sư
 //        (hiển thị trên hồ sơ: lịch cố định + sức chứa + trạng thái đăng ký của người xem)
 // POST /api/classes — gia sư mở lớp học cố định mới (học tại nhà mình, theo lịch tuần)
+// SẬ-TUT2 (B1): địa chỉ lớp (với AT_TUTOR_HOME = địa chỉ nhà gia sư — PII) chỉ
+//   trả cho (a) chính gia sư chủ lớp, (b) học sinh đã được DUYỆT vào lớp (APPROVED).
+//   Người xem ẩn danh / chưa vào lớp nhận null — đủ district/city để tham khảo.
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -98,6 +101,9 @@ export async function GET(req: NextRequest) {
       const mine = viewerId
         ? c.enrollments.find(e => e.studentParentId === viewerId) ?? null
         : null
+      // SẸ-TUT2 (B1): xem địa chỉ khi là chủ lớp hoặc đã APPROVED trong lớp
+      const maySeeAddress = viewer?.id === c.tutorId
+        || (mine !== null && mine.status === 'APPROVED')
       // Vị trí chờ của người xem (nếu đang trong danh sách chờ)
       const myWaitlistPosition = mine && mine.status === 'WAITLIST'
         ? waitlist.filter(w => w.createdAt <= mine.createdAt).length
@@ -110,7 +116,7 @@ export async function GET(req: NextRequest) {
         gradeLevel: c.gradeLevel,
         description: c.description,
         meetingType: c.meetingType,
-        address: c.address ?? tutor.address,
+        address: maySeeAddress ? (c.address ?? tutor.address) : null, // SẸ-TUT2 (B1)
         capacity: c.capacity,
         monthlyFee: c.monthlyFee,
         status: c.status,

@@ -2,6 +2,8 @@
 // POST /api/favorites/toggle { tutorId } → bật/tắt lưu, trả { favorited }
 // POST /api/favorites/merge { tutorIds: string[] } — merge wishlist localStorage
 //   của guest lên DB sau khi đăng nhập (idempotent, bỏ qua ID không tồn tại)
+// SẸ-TUT2 (B1): bỏ `address` (PII gia sư) khỏi DTO — đã lưu tutor vẫn chỉ thấy
+//   district/city; địa chỉ chính xác phải qua /api/tutors/[id] với điều kiện SẸ-TUT.
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getCurrentUser } from '@/lib/auth'
@@ -22,7 +24,7 @@ export async function GET() {
       tutor: {
         select: {
           id: true, name: true, avatar: true, bio: true, profession: true,
-          district: true, city: true, address: true, lat: true, lng: true,
+          district: true, city: true, lat: true, lng: true,
           hourlyRate: true, experienceYears: true, isVerified: true,
           teachesAtStudentHome: true, teachesAtOwnPlace: true, teachesOnline: true,
           travelRadiusKm: true,
@@ -52,7 +54,7 @@ export async function GET() {
         profession: t.profession,
         district: t.district,
         city: t.city,
-        address: t.address,
+        // SẸ-TUT2 (B1): không trả address — xem comment đầu file
         lat: t.lat,
         lng: t.lng,
         hourlyRate: t.hourlyRate,
