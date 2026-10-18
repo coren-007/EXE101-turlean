@@ -124,119 +124,158 @@ export async function POST(
   const studentName = parsed.data.studentName?.trim() || user.name
   const note = parsed.data.note?.trim() || null
 
-  const cls = await db.groupClass.findUnique({
-    where: { id },
-    include: {
-      schedule: true,
-      subject: { select: { name: true } },
-      tutor: { select: { id: true, name: true, address: true } },
-      enrollments: { select: { id: true, studentParentId: true, status: true, createdAt: true } },
-    },
-  })
-  if (!cls) return NextResponse.json({ error: 'Không tìm thấy lớp học' }, { status: 404 })
-  if (cls.tutorId === user.id) {
-    return NextResponse.json({ error: 'Đây là lớp của chính bạn' }, { status: 400 })
-  }
-  if (cls.status === 'CLOSED') {
-    return NextResponse.json({ error: 'Lớp này đã đóng' }, { status: 400 })
-  }
-  if (cls.status === 'PAUSED') {
-    return NextResponse.json(
-      { error: 'Lớp đang tạm dừng tuyển học sinh — vui lòng quay lại sau' },
-      { status: 400 },
-    )
-  }
-
-  // HẠN ĐĂNG KÝ: quá hạn thì không nhận đăng ký mới (kể cả danh sách chờ)
-  if (cls.enrollDeadline) {
-    const todayStr = todayISO() // SẸ-TZ (B3): theo giờ VN
-    if (cls.enrollDeadline < todayStr) {
-      return NextResponse.json(
-        { error: `Đã hết hạn đăng ký lớp này (hạn chót ${cls.enrollDeadline}) — vui lòng tìm lớp khác hoặc liên hệ gia sư` },
-        { status: 400 },
-      )
-    }
-  }
-
-  const approved = cls.enrollments.filter(e => e.status === 'APPROVED').length
-  const isFull = approved >= cls.capacity
-  const waiting = cls.enrollments
-    .filter(e => e.status === 'WAITLIST')
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-
-  const existing = cls.enrollments.find(e => e.studentParentId === user.id)
-  if (existing && ['PENDING', 'APPROVED', 'WAITLIST'].includes(existing.status)) {
-    return NextResponse.json(
-      {
-        error:
-          existing.status === 'PENDING'
-            ? 'Bạn đã gửi đăng ký lớp này — đang chờ gia sư duyệt'
-            : existing.status === 'WAITLIST'
-              ? 'Bạn đã ở trong danh sách chờ của lớp này'
-              : 'Bạn đã ở trong lớp này rồi',
-      },
-      { status: 400 },
-    )
-  }
-
-  // CẢNH BÁO TRÙNG LỊCH: lịch tuần lớp này có chồng lấn lịch học đang có của
-  // phụ huynh/học sinh (lớp nhóm khác + buổi 1-1 trong 8 tuần tới) → 409 kèm
-  // danh sách để frontend hỏi xác nhận; force=true thì cho đăng ký tiếp.
+  // ===== CẢNH BÁO trùng lịch (đọc thường — best-effort, không đổi dữ liệu) =====
   if (!parsed.data.force) {
-    const conflicts = await findStudentScheduleConflicts(user.id, cls.schedule, cls.id)
-    if (conflicts.length > 0) {
-      return NextResponse.json(
-        {
-          error: 'Lịch lớp này đang trùng với lịch học đã có của bạn',
-          conflicts,
-        },
-        { status: 409 },
-      )
+    const cls0 = await db.groupClass.findUnique({
+      where: { id },
+      select: { id: true, schedule: true },
+    })
+    if (cls0) {
+      const conflicts = await findStudentScheduleConflicts(user.id, cls0.schedule, cls0.id)
+      if (conflicts.length > 0) {
+        return NextResponse.json(
+          {
+            error: 'Lịch lớp này đang trùng với lịch học đã có của bạn',
+            conflicts,
+          },
+          { status: 409 },
+        )
+      }
     }
   }
 
-  // Còn chỗ → PENDING chờ duyệt; hết chỗ → WAITLIST danh sách chờ (tự động vào lớp khi có chỗ)
-  const status = isFull ? 'WAITLIST' : 'PENDING'
-  const payload = { studentName, note, status, updatedAt: new Date() }
-  const enrollment = existing
-    ? await db.classEnrollment.update({ where: { id: existing.id }, data: payload })
-    : await db.classEnrollment.create({
-        data: { classId: cls.id, studentParentId: user.id, ...payload },
-      })
+  // ===== SẸ-RACE3 (B11, audit CAO): toàn bộ kiểm tra + quyết định
+  // PENDING/WAITLIST + tạo enrollment + vị trí danh sách chờ chạy trong MỘT
+  // transaction. Trước đây snapshot enrollments đọc TÁCH RỜI lúc ghi:
+  //   · 2 phụ huynh đăng ký lúc lớp còn 1 chỗ → cả 2 cùng được PENDING
+  //     (may mắn tự lành ở bước duyệt nhờ SẸ-ENR, nhưng không bảo đảm)
+  //   · 2 phụ huynh vào DANH SÁCH CHỜ cùng lúc → cùng nhận vị trí #N
+  //     (position tính từ snapshot cũ waiting.length + 1)
+  type Outcome =
+    | { code: number; error: string }
+    | {
+        ok: true
+        enrollment: unknown
+        status: string
+        position: number | null
+        approved: number
+        capacity: number
+        classTitle: string
+        tutorId: string
+        schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
+      }
+  const outcome: Outcome = await db.$transaction(async tx => {
+    const cls = await tx.groupClass.findUnique({
+      where: { id },
+      include: {
+        schedule: true,
+        enrollments: { select: { id: true, studentParentId: true, status: true, createdAt: true } },
+      },
+    })
+    if (!cls) return { code: 404, error: 'Không tìm thấy lớp học' }
+    if (cls.tutorId === user.id) return { code: 400, error: 'Đây là lớp của chính bạn' }
+    if (cls.status === 'CLOSED') return { code: 400, error: 'Lớp này đã đóng' }
+    if (cls.status === 'PAUSED') {
+      return { code: 400, error: 'Lớp đang tạm dừng tuyển học sinh — vui lòng quay lại sau' }
+    }
 
-  // ===== Thông báo (best-effort, không chặn luồng chính) =====
-  if (status === 'WAITLIST') {
-    const position = waiting.length + 1
-    await notifyTutorNewWaitlist({
+    // HẠN ĐĂNG KÝ: quá hạn thì không nhận đăng ký mới (kể cả danh sách chờ)
+    if (cls.enrollDeadline) {
+      const todayStr = todayISO() // SẸ-TZ (B3): theo giờ VN
+      if (cls.enrollDeadline < todayStr) {
+        return {
+          code: 400,
+          error: `Đã hết hạn đăng ký lớp này (hạn chót ${cls.enrollDeadline}) — vui lòng tìm lớp khác hoặc liên hệ gia sư`,
+        }
+      }
+    }
+
+    const existing = cls.enrollments.find(e => e.studentParentId === user.id)
+    if (existing && ['PENDING', 'APPROVED', 'WAITLIST'].includes(existing.status)) {
+      const error =
+        existing.status === 'PENDING'
+          ? 'Bạn đã gửi đăng ký lớp này — đang chờ gia sư duyệt'
+          : existing.status === 'WAITLIST'
+            ? 'Bạn đã ở trong danh sách chờ của lớp này'
+            : 'Bạn đã ở trong lớp này rồi'
+      return { code: 400, error }
+    }
+
+    const approved = cls.enrollments.filter(e => e.status === 'APPROVED').length
+    const isFull = approved >= cls.capacity
+
+    // Còn chỗ → PENDING chờ duyệt; hết chỗ → WAITLIST danh sách chờ
+    const status = isFull ? 'WAITLIST' : 'PENDING'
+    const payload = { studentName, note, status, updatedAt: new Date() }
+    const enrollment = existing
+      ? await tx.classEnrollment.update({ where: { id: existing.id }, data: payload })
+      : await tx.classEnrollment.create({
+          data: { classId: cls.id, studentParentId: user.id, ...payload },
+        })
+
+    // Vị trí danh sách chờ: đếm CHÍNH XÁC trong transaction (đã gồm dòng vừa ghi)
+    let position: number | null = null
+    if (status === 'WAITLIST') {
+      const waitingCount = await tx.classEnrollment.count({
+        where: { classId: cls.id, status: 'WAITLIST' },
+      })
+      position = waitingCount
+    }
+
+    return {
+      ok: true as const,
+      enrollment,
+      status,
+      position,
+      approved,
+      capacity: cls.capacity,
+      classTitle: cls.title,
       tutorId: cls.tutorId,
+      schedule: cls.schedule.map(s => ({
+        dayOfWeek: s.dayOfWeek,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      })),
+    }
+  })
+
+  if (!('ok' in outcome)) {
+    return NextResponse.json({ error: outcome.error }, { status: outcome.code })
+  }
+
+  // ===== Thông báo (best-effort, NGOÀI transaction — không chặn luồng chính) =====
+  if (outcome.status === 'WAITLIST') {
+    const position = outcome.position ?? 1
+    await notifyTutorNewWaitlist({
+      tutorId: outcome.tutorId,
       studentParentId: user.id,
       parentName: user.name,
       studentName,
-      classTitle: cls.title,
+      classTitle: outcome.classTitle,
       position,
       note,
     })
     return NextResponse.json({
-      enrollment,
+      enrollment: outcome.enrollment,
       waitlistPosition: position,
-      message: `Lớp "${cls.title}" đã đủ sĩ số (${approved}/${cls.capacity}) — bạn đã vào DANH SÁCH CHỖ (vị trí #${position}). Khi có chỗ trống, hệ thống tự động chuyển bạn vào lớp và gửi thông báo.`,
+      message: `Lớp "${outcome.classTitle}" đã đủ sĩ số (${outcome.approved}/${outcome.capacity}) — bạn đã vào DANH SÁCH CHỖ (vị trí #${position}). Khi có chỗ trống, hệ thống tự động chuyển bạn vào lớp và gửi thông báo.`,
     })
   }
 
   await notifyTutorNewEnrollment({
-    tutorId: cls.tutorId,
+    tutorId: outcome.tutorId,
     studentParentId: user.id,
     parentName: user.name,
     studentName,
-    classTitle: cls.title,
-    schedule: formatClassSchedule(cls.schedule),
-    enrolledCount: approved,
-    capacity: cls.capacity,
+    classTitle: outcome.classTitle,
+    schedule: formatClassSchedule(outcome.schedule),
+    enrolledCount: outcome.approved,
+    capacity: outcome.capacity,
     note,
   })
 
   return NextResponse.json({
-    enrollment,
-    message: `Đã gửi đăng ký vào lớp "${cls.title}" — gia sư sẽ duyệt sớm nhất`,
+    enrollment: outcome.enrollment,
+    message: `Đã gửi đăng ký vào lớp "${outcome.classTitle}" — gia sư sẽ duyệt sớm nhất`,
   })
 }

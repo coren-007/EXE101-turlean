@@ -215,44 +215,52 @@ export async function POST(req: NextRequest) {
 
   // Chống trùng lịch CHÉO (B9): lớp mới không được trùng lớp nhóm khác của gia sư
   // (OPEN/PAUSED) hoặc buổi 1-1 đã nhận trong 8 tuần tới
-  const conflicts = await checkClassSlotConflicts(user.id, schedule)
-  if (conflicts.length > 0) {
-    return NextResponse.json(
-      { error: `Không thể mở lớp — trùng lịch dạy hiện có: ${conflicts[0]}${conflicts.length > 1 ? ` (và ${conflicts.length - 1} xung đột khác)` : ''}` },
-      { status: 409 },
-    )
+  // SẸ-RACE2 (B11, audit CAO): check xung đột + tạo lớp + sinh buổi chạy trong
+  // CÙNG transaction — trước đây check tách rời nên 2 request mở lớp song song có
+  // thể cùng vượt qua check rồi cùng create (double-booking).
+  const race = { conflictMsg: null as string | null }
+  const created = await db.$transaction(async tx => {
+    const conflicts = await checkClassSlotConflicts(user.id, schedule, undefined, tx)
+    if (conflicts.length > 0) {
+      race.conflictMsg = `Không thể mở lớp — trùng lịch dạy hiện có: ${conflicts[0]}${conflicts.length > 1 ? ` (và ${conflicts.length - 1} xung đột khác)` : ''}`
+      return null
+    }
+    const cls = await tx.groupClass.create({
+      data: {
+        tutorId: user.id,
+        subjectId,
+        title,
+        gradeLevel,
+        description,
+        meetingType: meetType,
+        address: finalAddress,
+        capacity,
+        monthlyFee,
+        startDate,
+        enrollDeadline,
+        status: 'OPEN',
+        schedule: {
+          create: schedule.map(s => ({
+            dayOfWeek: s.dayOfWeek,
+            startTime: s.startTime,
+            endTime: s.endTime,
+          })),
+        },
+      },
+      include: {
+        schedule: true,
+        subject: { select: { id: true, name: true } },
+      },
+    })
+    // Sinh buổi học cụ thể 12 tuần — cùng transaction (atomic với tạo lớp)
+    await generateSessionsForClass(cls.id, tx)
+    return cls
+  })
+  if (race.conflictMsg || !created) {
+    return NextResponse.json({ error: race.conflictMsg ?? 'Không thể mở lớp' }, { status: 409 })
   }
 
-  const created = await db.groupClass.create({
-    data: {
-      tutorId: user.id,
-      subjectId,
-      title,
-      gradeLevel,
-      description,
-      meetingType: meetType,
-      address: finalAddress,
-      capacity,
-      monthlyFee,
-      startDate,
-      enrollDeadline,
-      status: 'OPEN',
-      schedule: {
-        create: schedule.map(s => ({
-          dayOfWeek: s.dayOfWeek,
-          startTime: s.startTime,
-          endTime: s.endTime,
-        })),
-      },
-    },
-    include: {
-      schedule: true,
-      subject: { select: { id: true, name: true } },
-    },
-  })
-
-  // Sinh buổi học cụ thể 12 tuần tới từ lịch tuần (điểm danh / dời buổi dựa trên này)
-  const sessionsCreated = await generateSessionsForClass(created.id)
+  const sessionsCreated = await db.classSession.count({ where: { classId: created.id } })
 
   return NextResponse.json({ ...created, sessionsCreated }, { status: 201 })
 }

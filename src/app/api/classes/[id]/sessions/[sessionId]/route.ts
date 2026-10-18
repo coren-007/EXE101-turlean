@@ -94,8 +94,8 @@ export async function PATCH(
     }
 
     // Xếp buổi dạy bù đi kèm — validate + check conflict TRƯỚC khi hủy buổi gốc
-    if (body.makeup) {
-      const mu = body.makeup
+    const mu = body.makeup ?? null
+    if (mu) {
       if (mu.startTime >= mu.endTime) {
         return NextResponse.json({ error: 'Giờ bắt đầu buổi bù phải trước giờ kết thúc' }, { status: 400 })
       }
@@ -106,36 +106,54 @@ export async function PATCH(
       if (vnEpoch(mu.date, mu.startTime) < Date.now()) {
         return NextResponse.json({ error: 'Không thể xếp buổi bù vào thời gian đã qua' }, { status: 400 })
       }
-      // Trùng buổi khác? (exclude buổi gốc — nó sắp bị hủy)
-      const conflict = await checkSessionReschedule(user.id, sessionId, mu.date, mu.startTime, mu.endTime)
-      if (conflict) {
-        return NextResponse.json({ error: `Không thể xếp buổi bù — ${conflict}` }, { status: 409 })
-      }
-      const existed = await db.classSession.findFirst({
-        where: { classId: session.classId, date: mu.date, startTime: mu.startTime },
-      })
-      if (existed) {
-        return NextResponse.json({ error: 'Lớp đã có buổi cùng ngày cùng giờ này' }, { status: 409 })
-      }
     }
 
-    const updated = await db.classSession.update({
-      where: { id: sessionId },
-      data: { status: 'CANCELLED', note: reason },
+    // SẸ-RACE4 (B11, audit CAO): check conflict + hủy buổi + tạo buổi bù trong
+    // CÙNG transaction — trước đây check tách rời nên 2 thao tác song song có thể
+    // cùng đè lên một khung giờ (check→act ngoài tx).
+    const race = { conflictMsg: null as string | null }
+    const result = await db.$transaction(async tx => {
+      if (mu) {
+        // Trùng buổi khác? (exclude buổi gốc — nó sắp bị hủy)
+        const conflict = await checkSessionReschedule(user.id, sessionId, mu.date, mu.startTime, mu.endTime, tx)
+        if (conflict) {
+          race.conflictMsg = `Không thể xếp buổi bù — ${conflict}`
+          return null
+        }
+        const existed = await tx.classSession.findFirst({
+          where: { classId: session.classId, date: mu.date, startTime: mu.startTime },
+        })
+        if (existed) {
+          race.conflictMsg = 'Lớp đã có buổi cùng ngày cùng giờ này'
+          return null
+        }
+      }
+      const updated = await tx.classSession.update({
+        where: { id: sessionId },
+        data: { status: 'CANCELLED', note: reason },
+      })
+      if (mu) {
+        const makeupSession = await tx.classSession.create({
+          data: {
+            classId: session.classId,
+            date: mu.date,
+            startTime: mu.startTime,
+            endTime: mu.endTime,
+            status: 'SCHEDULED',
+            makeupForId: sessionId,
+            note: `Dạy bù cho buổi ${formatDate(session.date)} (${reason})`,
+          },
+        })
+        return { updated, makeupSession }
+      }
+      return { updated, makeupSession: null }
     })
+    if (!result) {
+      return NextResponse.json({ error: race.conflictMsg ?? 'Không thể xếp buổi bù' }, { status: 409 })
+    }
+    const { updated, makeupSession } = result
 
     if (body.makeup) {
-      const makeupSession = await db.classSession.create({
-        data: {
-          classId: session.classId,
-          date: body.makeup.date,
-          startTime: body.makeup.startTime,
-          endTime: body.makeup.endTime,
-          status: 'SCHEDULED',
-          makeupForId: sessionId,
-          note: `Dạy bù cho buổi ${formatDate(session.date)} (${reason})`,
-        },
-      })
       await notifyStudentsMakeupScheduled({
         tutorId: session.class.tutorId,
         tutorName: session.class.tutor.name,
@@ -185,15 +203,22 @@ export async function PATCH(
   }
 
   // Chống trùng lịch: lớp khác + buổi 1-1 cùng ngày của gia sư
-  const conflict = await checkSessionReschedule(user.id, sessionId, newDate, newStart, newEnd)
-  if (conflict) {
-    return NextResponse.json({ error: `Không thể dời buổi — ${conflict}` }, { status: 409 })
-  }
-
-  const updated = await db.classSession.update({
-    where: { id: sessionId },
-    data: { date: newDate, startTime: newStart, endTime: newEnd, note: reason },
+  // SẸ-RACE4 (B11): check + update trong cùng transaction
+  const race2 = { conflictMsg: null as string | null }
+  const updated = await db.$transaction(async tx => {
+    const conflict = await checkSessionReschedule(user.id, sessionId, newDate, newStart, newEnd, tx)
+    if (conflict) {
+      race2.conflictMsg = `Không thể dời buổi — ${conflict}`
+      return null
+    }
+    return tx.classSession.update({
+      where: { id: sessionId },
+      data: { date: newDate, startTime: newStart, endTime: newEnd, note: reason },
+    })
   })
+  if (!updated) {
+    return NextResponse.json({ error: race2.conflictMsg ?? 'Không thể dời buổi' }, { status: 409 })
+  }
 
   await notifyStudentsSessionRescheduled({
     tutorId: session.class.tutorId,

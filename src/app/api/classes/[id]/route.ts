@@ -151,13 +151,7 @@ export async function PATCH(
       }
     }
     // Chống trùng lịch CHÉO: lịch mới không được trùng lớp khác / buổi 1-1 đã nhận
-    const conflicts = await checkClassSlotConflicts(user.id, body.schedule, id)
-    if (conflicts.length > 0) {
-      return NextResponse.json(
-        { error: `Không thể đổi lịch — trùng lịch dạy hiện có: ${conflicts[0]}${conflicts.length > 1 ? ` (và ${conflicts.length - 1} xung đột khác)` : ''}` },
-        { status: 409 },
-      )
-    }
+    // (check chạy BÊN TRONG transaction bên dưới — SẸ-RACE5 (B11))
   }
 
   const scheduleChanged = !!body.schedule && body.schedule.some(s => {
@@ -177,8 +171,17 @@ export async function PATCH(
     if (body[key] !== undefined) data[key] = body[key]
   }
 
+  // SẸ-RACE5 (B11, audit CAO): check xung đột lịch mới + ghi slot + update lớp
+  // trong CÙNG transaction — trước đây check tách rời nên 2 request đổi lịch
+  // song song có thể cùng vượt check rồi cùng ghi (double-booking lịch tuần).
+  const race = { conflictMsg: null as string | null }
   const updated = await db.$transaction(async tx => {
     if (body.schedule) {
+      const conflicts = await checkClassSlotConflicts(user.id, body.schedule, id, tx)
+      if (conflicts.length > 0) {
+        race.conflictMsg = `Không thể đổi lịch — trùng lịch dạy hiện có: ${conflicts[0]}${conflicts.length > 1 ? ` (và ${conflicts.length - 1} xung đột khác)` : ''}`
+        return null
+      }
       await tx.classScheduleSlot.deleteMany({ where: { classId: id } })
       await tx.classScheduleSlot.createMany({
         data: body.schedule.map(s => ({
@@ -198,6 +201,9 @@ export async function PATCH(
       },
     })
   })
+  if (!updated) {
+    return NextResponse.json({ error: race.conflictMsg ?? 'Không thể đổi lịch' }, { status: 409 })
+  }
 
   // ===== Tác dụng phụ sau khi cập nhật =====
 

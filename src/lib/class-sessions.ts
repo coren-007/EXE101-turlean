@@ -129,8 +129,16 @@ export function generateSessionDates(
  * Từ ngày max(hôm nay, startDate). Bỏ qua lớp CLOSED và NGÀY NGHỈ LỄ.
  * Trả về số buổi mới sinh.
  */
-export async function generateSessionsForClass(classId: string): Promise<number> {
-  const cls = await db.groupClass.findUnique({
+/**
+ * Sinh buổi học cụ thể (12 tuần) cho lớp từ lịch tuần.
+ * SẸ-RACE (B11): nhận transaction client tùy chọn — khi gọi từ route đã mở
+ * transaction, việc sinh buổi nằm trong cùng khối atomic với tạo lớp.
+ */
+export async function generateSessionsForClass(
+  classId: string,
+  tx: Prisma.TransactionClient = db,
+): Promise<number> {
+  const cls = await tx.groupClass.findUnique({
     where: { id: classId },
     include: { schedule: true },
   })
@@ -141,7 +149,7 @@ export async function generateSessionsForClass(classId: string): Promise<number>
 
   const [holidays, existing] = await Promise.all([
     getHolidayDates(),
-    db.classSession.findMany({
+    tx.classSession.findMany({
       where: { classId },
       select: { date: true, startTime: true },
     }),
@@ -152,7 +160,7 @@ export async function generateSessionsForClass(classId: string): Promise<number>
   )
   if (toCreate.length === 0) return 0
 
-  await db.classSession.createMany({
+  await tx.classSession.createMany({
     data: toCreate.map(d => ({ classId, ...d, status: 'SCHEDULED' })),
   })
   return toCreate.length
@@ -216,16 +224,20 @@ export async function regenerateFutureSessions(classId: string): Promise<number>
  * trùng trong cùng lớp): lớp mới không được trùng (a) lớp nhóm khác của cùng gia sư
  * (OPEN/PAUSED), (b) buổi 1-1 đã đặt trong 8 tuần tới (PENDING/CONFIRMED).
  * Trả về danh sách lỗi (rỗng = hợp lệ).
+ * SẸ-RACE (B11, audit CAO): nhận transaction client tùy chọn — gọi từ route
+ * đã mở transaction thì check xung đột + tạo lớp cùng khối atomic, hai request
+ * mở lớp song song không còn cùng vượt qua check rồi cùng tạo (double-booking).
  */
 export async function checkClassSlotConflicts(
   tutorId: string,
   slots: SlotLike[],
   excludeClassId?: string,
+  tx: Prisma.TransactionClient = db,
 ): Promise<string[]> {
   const errors: string[] = []
 
   // (a) Trùng lớp nhóm khác của cùng gia sư
-  const otherClasses = await db.groupClass.findMany({
+  const otherClasses = await tx.groupClass.findMany({
     where: {
       tutorId,
       status: { in: ['OPEN', 'PAUSED'] },
@@ -248,7 +260,7 @@ export async function checkClassSlotConflicts(
   // (b) Trùng buổi 1-1 đã đặt trong 8 tuần tới
   const today = todayISO()
   const until = addDaysISO(today, 56)
-  const bookings = await db.booking.findMany({
+  const bookings = await tx.booking.findMany({
     where: {
       tutorId,
       status: { in: ['PENDING', 'CONFIRMED'] },
@@ -274,6 +286,9 @@ export async function checkClassSlotConflicts(
  * Check conflict khi DỜI 1 buổi (dạy bù): khung giờ mới không được trùng
  * (a) buổi lớp nhóm khác cùng ngày của gia sư, (b) buổi 1-1 cùng ngày.
  * Trả về chuỗi lỗi (null = hợp lệ).
+ * SẸ-RACE (B11, audit CAO): nhận transaction client tùy chọn — dời buổi/nghỉ
+ * buổi kèm check xung đột chạy cùng transaction với update (trước đây check
+ * tách rời → 2 thao tác dời song song có thể cùng đè lên một khung giờ).
  */
 export async function checkSessionReschedule(
   tutorId: string,
@@ -281,9 +296,10 @@ export async function checkSessionReschedule(
   newDate: string,
   newStart: string,
   newEnd: string,
+  tx: Prisma.TransactionClient = db,
 ): Promise<string | null> {
   // (a) buổi lớp nhóm khác (kể cả cùng lớp — không dời đè lên buổi khác)
-  const classSessions = await db.classSession.findMany({
+  const classSessions = await tx.classSession.findMany({
     where: {
       id: { not: sessionId },
       status: { not: 'CANCELLED' },
@@ -299,7 +315,7 @@ export async function checkSessionReschedule(
   }
 
   // (b) buổi 1-1 cùng ngày
-  const bookings = await db.booking.findMany({
+  const bookings = await tx.booking.findMany({
     where: {
       tutorId,
       date: newDate,
