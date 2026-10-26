@@ -178,6 +178,7 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                 <Input
                   id="email"
                   type="email"
+                  required
                   placeholder="ban@email.com"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
@@ -193,6 +194,7 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                 <Input
                   id="password"
                   type="password"
+                  required
                   placeholder="••••••"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
@@ -257,6 +259,7 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="reg-name"
+                  required
                   placeholder={role === 'TUTOR' ? 'Nguyễn Văn A' : 'Phụ huynh Nguyễn Văn A'}
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
@@ -273,6 +276,7 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                   <Input
                     id="reg-email"
                     type="email"
+                    required
                     placeholder="ban@email.com"
                     value={regEmail}
                     onChange={(e) => setRegEmail(e.target.value)}
@@ -286,6 +290,7 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="reg-phone"
+                    required
                     placeholder="09xxx..."
                     value={regPhone}
                     onChange={(e) => setRegPhone(e.target.value)}
@@ -302,6 +307,8 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                 <Input
                   id="reg-password"
                   type="password"
+                  required
+                  minLength={6}
                   placeholder="Ít nhất 6 ký tự"
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}

@@ -231,10 +231,14 @@ export function TutorProfilePage({ id }: { id: string }) {
       fetch(`/api/classes?tutorId=${id}`).then(r => r.json()).catch(() => ({ classes: [] })),
     ])
       .then(([data, clsData]) => {
-        setTutor(data)
+        // API trả { error } khi ID không tồn tại / gia sư bị xóa — nếu set thẳng
+        // sẽ crash trắng ở render (tutor.name.charAt) khi phụ huynh mở link cũ.
+        // Đặt null để rơi vào UI "Không tìm thấy gia sư" đã có sẵn.
+        const tutorData = !data || data.error || !data.id ? null : data
+        setTutor(tutorData)
         // P5: ghi nhận "đã xem gần đây" (chỉ hồ sơ gia sư hợp lệ)
-        if (data?.id) pushRecentlyViewed(data.id)
-        if (data.subjects?.[0]) setSelectedSubject(data.subjects[0].id)
+        if (tutorData?.id) pushRecentlyViewed(tutorData.id)
+        if (tutorData.subjects?.[0]) setSelectedSubject(tutorData.subjects[0].id)
         const clsList: ClassInfo[] = clsData.classes || []
         setClasses(clsList)
         setLoading(false)

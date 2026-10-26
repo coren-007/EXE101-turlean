@@ -302,7 +302,7 @@ export function StudentScheduleCalendar() {
 
       {/* ===== Bộ lọc ===== */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-xs text-muted-foreground font-medium">Hiện thị:</span>
+        <span className="text-xs text-muted-foreground font-medium">Hiển thị:</span>
         {filterChip('group', 'bg-violet-600', 'Lớp nhóm')}
         {filterChip('one', 'bg-blue-600', 'Lớp 1-1')}
       </div>

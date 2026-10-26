@@ -393,7 +393,10 @@ export function MessagesPage({ initialConversationId }: { initialConversationId?
   // Mobile: hiện 1 pane (thread nếu đang mở, ngược lại là danh sách)
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6">
-      <div className="grid md:grid-cols-[340px_1fr] gap-4 h-[calc(100vh-8rem)] md:h-[calc(100vh-9rem)]">
+      {/* P6-fix (responsive): grid-cols-1 tường minh cho mobile + minmax(0,1fr) cho
+          cột thread — tránh cột 1fr lấy min-content của tin nhắn dài làm giãn
+          toàn bộ layout tràn ngang (817px > 768px trên tablet) */}
+      <div className="grid grid-cols-1 md:grid-cols-[340px_minmax(0,1fr)] gap-4 h-[calc(100vh-8rem)] md:h-[calc(100vh-9rem)]">
         <div className={`${activeId ? 'hidden md:block' : 'block'} min-h-0`}>
           <ListPane />
         </div>

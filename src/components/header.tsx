@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { LogOut, Menu, GraduationCap, ChevronDown, ExternalLink, MessageSquare, LayoutDashboard, Search, Heart } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useSyncExternalStore } from 'react'
 import { useFavorites } from '@/lib/favorites'
 import {
   Sheet,
@@ -71,7 +71,16 @@ export function Header() {
     navigate({ name: 'home' })
   }
 
-  const isActive = (name: string) => view.name === name
+  // P6-fix (hydration): SSR render nav với view 'home', lần hydrate đầu của client
+  // cũng phải giống hệt (dù URL là ?view=search/tutor/...) — nếu không React báo
+  // hydration mismatch trên nút active. mounted=false → luôn coi 'home' đang active
+  // cho đến khi mount xong (giống P5-fix ở page.tsx).
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  )
+  const isActive = (name: string) => (mounted ? view.name : 'home') === name
 
   // Wishlist — load theo role (guest → localStorage, login → DB kèm merge)
   const { ids: favoriteIds, load: loadFavorites } = useFavorites()
@@ -99,7 +108,7 @@ export function Header() {
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-e1">
               <GraduationCap className="h-5 w-5" />
             </div>
-            <span className="text-lg font-extrabold tracking-tight">
+            <span className="hidden min-[420px]:inline text-lg font-extrabold tracking-tight">
               GiaSu<span className="text-primary">Connect</span>
             </span>
           </button>
@@ -135,11 +144,12 @@ export function Header() {
               </Button>
             )}
 
-            {/* Gia sư đã lưu (wishlist) với badge số lượng */}
+            {/* Gia sư đã lưu (wishlist) — ẩn dưới sm (dư nút, nhóm phải header bị tràn
+            390px khi đã đăng nhập); mobile vẫn truy cập được qua menu avatar + Sheet */}
             <Button
               variant="ghost"
               size="icon"
-              className="relative h-10 w-10 rounded-full"
+              className="relative h-10 w-10 rounded-full hidden sm:inline-flex"
               onClick={() => navigate({ name: 'favorites' })}
               aria-label={`Gia sư đã lưu${favoriteIds.length > 0 ? ` (${favoriteIds.length})` : ''}`}
             >

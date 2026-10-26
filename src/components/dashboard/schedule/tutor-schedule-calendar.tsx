@@ -271,7 +271,7 @@ export function TutorScheduleCalendar() {
       {/* ===== Bộ lọc + nút chỉnh giờ trống ===== */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-muted-foreground font-medium">Hiện thị:</span>
+          <span className="text-xs text-muted-foreground font-medium">Hiển thị:</span>
           {filterChip('group', 'bg-violet-600', 'Lớp nhóm')}
           {filterChip('one', 'bg-blue-600', 'Lớp 1-1')}
           {mode === 'week' && filterChip('avail', 'bg-emerald-50', 'Giờ trống 1-1', true)}
