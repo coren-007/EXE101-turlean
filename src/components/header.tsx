@@ -16,6 +16,7 @@ import { useFavorites } from '@/lib/favorites'
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetTrigger,
   SheetTitle,
 } from '@/components/ui/sheet'
@@ -262,6 +263,11 @@ export function Header() {
               </SheetTrigger>
               <SheetContent side="right" className="w-[280px]">
                 <SheetTitle className="text-left">Menu</SheetTitle>
+                {/* RADIX-WARN (GĐ3): bổ sung Description cho Sheet menu mobile
+                    (Sheet build trên Radix Dialog) */}
+                <SheetDescription className="sr-only">
+                  Danh sách điều hướng chính của GiaSuConnect.
+                </SheetDescription>
                 <div className="flex flex-col gap-3 mt-6">
                   {navItems.map(item => (
                     <Button

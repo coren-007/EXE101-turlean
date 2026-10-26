@@ -613,7 +613,8 @@ export function DashboardPage() {
           <BookOpen className="h-4 w-4 text-primary" />
           {isTutor ? 'Lớp học đang dạy' : 'Lớp học đang theo học'}
         </h2>
-        <div className="grid md:grid-cols-2 gap-3">
+        {/* C-DASH (GĐ3): grid-cols-1 = minmax(0,1fr) — track mobile co theo container */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {groups.map(g => {
             const total = g.sessions.length - g.cancelled
             const progress = total > 0 ? Math.round((g.completed / total) * 100) : 0
@@ -679,7 +680,8 @@ export function DashboardPage() {
                       </div>
                     </div>
 
-                    <div className="flex gap-2 mt-3">
+                    {/* C-DASH (GĐ3): flex-wrap — hàng nút không còn đẩy card tràn 390px */}
+                    <div className="flex flex-wrap gap-2 mt-3">
                       <Button size="sm" variant="outline" onClick={() => openChat(g.counterpartId)}>
                         <MessageSquare className="h-3.5 w-3.5 mr-1" /> Nhắn tin
                       </Button>

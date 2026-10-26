@@ -22,7 +22,9 @@ const schema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   role: z.enum(['TUTOR', 'STUDENT']),
-  phone: z.string().optional(),
+  // S4 (GĐ3): UI đánh dấu SĐT là bắt buộc — server giờ yêu cầu tương ứng
+  // để validation client/server nhất quán (trước đây server optional).
+  phone: z.string().min(1, 'Vui lòng nhập số điện thoại'),
   district: z.string().optional(),
   city: z.string().optional(),
   address: z.string().optional(),
@@ -53,13 +55,17 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const parsed = schema.safeParse(body)
     if (!parsed.success) {
-      // SẬ-AUTH: chỉ trả THÔNG ĐIỆP đã soạn (message tiếng Việt của rule Zod),
-      // không trả chuỗi lỗi thô (issues chứa path/schema → lộ nội bộ).
-      const msg = parsed.error.issues[0]?.message
+      // SẬ-AUTH: chỉ trả THÔNG ĐIỆP đã soạn (tiếng Việt), không trả chuỗi lỗi thô
+      // (issues chứa path/schema → lộ nội bộ).
+      // B-REG (GĐ3): map theo PATH của issue thay vì regex message — zod v4 đổi
+      // message ("Invalid email address", "Too small: expected...") làm regex cũ
+      // không khớp, mọi lỗi đều rơi fallback chung chung.
+      const field = parsed.error.issues[0]?.path?.[0]
       const friendly =
-        msg === 'Invalid email' ? 'Email không hợp lệ'
-        : /at least 2 character/i.test(msg ?? '') ? 'Tên phải có ít nhất 2 ký tự'
-        : /at least 6 character/i.test(msg ?? '') ? 'Mật khẩu phải có ít nhất 6 ký tự'
+        field === 'email' ? 'Email không hợp lệ'
+        : field === 'name' ? 'Tên phải có ít nhất 2 ký tự'
+        : field === 'password' ? 'Mật khẩu phải có ít nhất 6 ký tự'
+        : field === 'phone' ? 'Vui lòng nhập số điện thoại'
         : 'Dữ liệu đăng ký không hợp lệ'
       return NextResponse.json({ error: friendly }, { status: 400 })
     }

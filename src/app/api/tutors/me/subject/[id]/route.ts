@@ -9,7 +9,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (user.role !== 'TUTOR') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id } = await params
-  const body = await req.json()
+  // S2c (GĐ3): body rác/không phải JSON → 400 thay vì 500 unhandled
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Dữ liệu không hợp lệ' }, { status: 400 })
+  }
   const { pricePerHour, description } = body
 
   const ts = await db.tutorSubject.findUnique({ where: { id } })

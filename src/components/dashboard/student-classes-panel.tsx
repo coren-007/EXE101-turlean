@@ -233,11 +233,15 @@ export function StudentClassesPanel() {
                 ))}
               </div>
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="inline-flex items-center gap-1">
+                {/* C-DASH (GĐ3): flex-wrap + min-w-0 + break-words cho span địa chỉ — địa chỉ dài
+                    không còn đẩy card tràn ngang viewport 390px */}
+                <span className="inline-flex flex-wrap items-center gap-1 min-w-0">
                   {cls.meetingType === 'ONLINE'
-                    ? <><Video className="h-3.5 w-3.5" /> Trực tuyến</>
-                    : <><HomeIcon className="h-3.5 w-3.5" /> Tại nhà gia sư</>}
-                  {cls.address ? ` · ${cls.address}` : ''}
+                    ? <><Video className="h-3.5 w-3.5 shrink-0" /> Trực tuyến</>
+                    : <><HomeIcon className="h-3.5 w-3.5 shrink-0" /> Tại nhà gia sư</>}
+                  {cls.address && (
+                    <span className="min-w-0 break-words">{` · ${cls.address}`}</span>
+                  )}
                 </span>
                 {cls.monthlyFee != null && (
                   <span className="inline-flex items-center gap-1">
@@ -434,7 +438,9 @@ export function StudentClassesPanel() {
           </span>
         )}
       </h2>
-      <div className="grid md:grid-cols-2 gap-3">
+      {/* C-DASH (GĐ3): grid-cols-1 = minmax(0,1fr) — track mobile luôn co theo container,
+          không bị min-content của card đẩy rộng */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {active.map(renderCard)}
       </div>
       {past.length > 0 && (
@@ -442,7 +448,7 @@ export function StudentClassesPanel() {
           <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground">
             Đăng ký đã kết thúc ({past.length})
           </summary>
-          <div className="grid md:grid-cols-2 gap-3 mt-3 opacity-75">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 opacity-75">
             {past.map(renderCard)}
           </div>
         </details>

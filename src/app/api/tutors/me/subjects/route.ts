@@ -22,7 +22,14 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
   if (user.role !== 'TUTOR') return NextResponse.json({ error: 'Chỉ gia sư mới thêm được môn' }, { status: 403 })
 
-  const { subjectId, pricePerHour, description } = await req.json()
+  // S2b (GĐ3): body rác/không phải JSON → 400 thay vì 500 unhandled
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Dữ liệu không hợp lệ' }, { status: 400 })
+  }
+  const { subjectId, pricePerHour, description } = body
   if (!subjectId || !pricePerHour || pricePerHour < 50000) {
     return NextResponse.json({ error: 'Thông tin không hợp lệ. Giá tối thiểu 50.000đ' }, { status: 400 })
   }

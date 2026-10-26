@@ -361,7 +361,13 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Chưa đăng nhập' }, { status: 401 })
   }
 
-  const body = await req.json()
+  // S2a (GĐ3): body rác/không phải JSON → 400 thay vì 500 unhandled (mirror POST ở trên)
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Dữ liệu không hợp lệ' }, { status: 400 })
+  }
   const { bookingId, status } = body
   if (!bookingId || !status) {
     return NextResponse.json({ error: 'Thiếu thông tin' }, { status: 400 })

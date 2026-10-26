@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Sheet, SheetContent, SheetTitle, SheetHeader } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetHeader } from '@/components/ui/sheet'
 import { TutorCard, Tutor } from '@/components/tutor-card'
 import { SearchSuggest, pushRecentSearch, SuggestSubject } from '@/components/search-suggest'
 import { FavoriteButton } from '@/components/favorite-button'
@@ -1138,6 +1138,7 @@ export function SearchPage() {
                   selectedId={selectedId}
                   onLocate={detectLocation}
                   onAreaChange={handleMapAreaChange}
+                  onOpenTutor={(id) => navigate({ name: 'tutor', id })}
                 />
               </Suspense>
               {/* P5: nút "Tìm trong khu vực này" — hiện khi người dùng pan/zoom bản đồ */}
@@ -1172,6 +1173,11 @@ export function SearchPage() {
         <SheetContent side="right" className="w-[360px] max-w-[90vw] overflow-y-auto scroll-area">
           <SheetHeader>
             <SheetTitle className="text-left">Bộ lọc chi tiết</SheetTitle>
+            {/* RADIX-WARN (GĐ3): Sheet build trên Radix Dialog — thêm Description
+                để hết console warning "Missing Description for DialogContent" */}
+            <SheetDescription className="sr-only">
+              Tinh chỉnh tiêu chí tìm kiếm gia sư và lớp học theo môn, giá, khu vực và hình thức dạy.
+            </SheetDescription>
           </SheetHeader>
           <div className="mt-4">
             {renderAdvancedFilters()}

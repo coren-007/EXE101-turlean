@@ -122,7 +122,9 @@ export async function GET(_req: NextRequest) {
           subject: cls.subject,
           gradeLevel: cls.gradeLevel,
           meetingType: cls.meetingType,
-          address: cls.address,
+          // SẸ-TUT2 (S1 — GĐ3): địa chỉ chỉ dành cho enrollment đã ĐƯỢC DUYỆT vào lớp,
+          // mirror chính sách /api/classes (PENDING/REJECTED/CANCELLED/WAITLIST → null)
+          address: e.status === 'APPROVED' ? cls.address : null,
           capacity: cls.capacity,
           monthlyFee: cls.monthlyFee,
           status: cls.status,
@@ -144,7 +146,12 @@ export async function GET(_req: NextRequest) {
           cancelledRecent: cls.sessions
             .filter(s => s.status === 'CANCELLED' && s.date >= todayStr)
             .map(s => ({ id: s.id, date: s.date, startTime: s.startTime, note: s.note })),
-          tutor: cls.tutor,
+          // S1 (GĐ3): gate PII theo trạng thái enrollment — address gia sư
+          // chỉ hiện khi người dùng này đã APPROVED trong lớp
+          tutor: {
+            ...cls.tutor,
+            address: e.status === 'APPROVED' ? cls.tutor.address : null,
+          },
         },
         // Chuyên cần của học sinh này (đi muộn tính riêng, không tính vắng)
         attendance: {

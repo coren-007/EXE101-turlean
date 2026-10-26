@@ -257,6 +257,8 @@ export function TutorSubjectsPanel() {
                           variant="ghost"
                           className="rounded-lg h-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                           onClick={() => handleDelete(s)}
+                          aria-label={`Xóa môn ${s.subject.name}`}
+                          title={`Xóa môn ${s.subject.name}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

@@ -51,7 +51,10 @@
   --card-foreground: oklch(0.18 0.01 20);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.18 0.01 20);
-  --primary: oklch(0.62 0.21 22); /* Airbnb red #FF5A5F */
+  /* S11 (GĐ3 — WCAG AA): tối lại từ oklch(0.62 0.21 22) (#EA3B48, 4.02:1 với chữ trắng)
+     → oklch(0.55 0.21 22) = #D01A34: 5.42:1 với chữ trắng, ~4.6:1 cho text-primary
+     trên nền primary/10 — mọi cặp chữ dùng primary đều >= AA 4.5:1 */
+  --primary: oklch(0.55 0.21 22);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.965 0.005 20);
   --secondary-foreground: oklch(0.25 0.01 20);
@@ -62,7 +65,7 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.915 0.005 20);
   --input: oklch(0.92 0.005 20);
-  --ring: oklch(0.62 0.21 22);
+  --ring: oklch(0.55 0.21 22);
   --chart-1: oklch(0.62 0.21 22);
   --chart-2: oklch(0.7 0.15 145);
   --chart-3: oklch(0.65 0.18 250);
@@ -268,6 +271,23 @@
   font-weight: 700;
   font-size: 14px;
   margin-top: 6px;
+}
+/* D-MAP (GĐ3): nút "Xem hồ sơ" trong popup marker — popup là HTML thô
+   (ngoài JSX) nên cần style riêng thay vì class Tailwind */
+.leaflet-popup-content .popup-view-btn {
+  margin-top: 8px;
+  width: 100%;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.leaflet-popup-content .popup-view-btn:hover {
+  filter: brightness(1.08);
 }
 .leaflet-popup-tip {
   box-shadow: 0 4px 24px rgba(0,0,0,0.12);

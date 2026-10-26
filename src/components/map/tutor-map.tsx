@@ -88,6 +88,7 @@ function tutorPopupHtml(t: Tutor): string {
     <div class="popup-meta">${escapeHtml(t.profession || '')}</div>
     <div class="popup-meta">${escapeHtml(meta)}</div>
     <div class="popup-price">${escapeHtml(formatVnd(t.minPrice))}<span class="text-xs font-normal text-muted-foreground">/giờ</span></div>
+    <button type="button" class="popup-view-btn" data-tutor-id="${escapeHtml(t.id)}">Xem hồ sơ</button>
   `
 }
 
@@ -147,6 +148,22 @@ function ClickHandler({ onPick }: { onPick: (lat: number, lng: number) => void }
   useMapEvents({
     click(e: any) {
       onPick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
+// D-MAP (GĐ3): popup Leaflet là HTML thô — bắt click nút "Xem hồ sơ" qua sự kiện
+// popupopen của map (event delegation), rồi gọi onOpenTutor để chuyển sang hồ sơ.
+function PopupViewProfile({ onOpenTutor }: { onOpenTutor: (id: string) => void }) {
+  useMapEvents({
+    popupopen(e: any) {
+      const root = e.popup?.getElement?.()
+      const btn = root?.querySelector?.('.popup-view-btn')
+      if (!btn) return
+      const id = btn.getAttribute('data-tutor-id') || ''
+      // gán qua .onclick (idempotent) — popup Leaflet tái sử dụng element theo marker
+      btn.onclick = () => onOpenTutor(id)
     },
   })
   return null
@@ -319,6 +336,8 @@ export interface TutorMapProps {
   onLocate?: () => void
   // P5: map search-as-you-move — báo khi người dùng pan/zoom bản đồ
   onAreaChange?: (lat: number, lng: number, radiusKm: number) => void
+  // D-MAP (GĐ3): mở hồ sơ gia sư từ nút trong popup marker
+  onOpenTutor?: (id: string) => void
 }
 
 export function TutorMap({
@@ -334,6 +353,7 @@ export function TutorMap({
   pickedLng,
   onLocate,
   onAreaChange,
+  onOpenTutor,
 }: TutorMapProps) {
   const ready = useLeaflet()
   const [layer, setLayer] = useState<'street' | 'satellite'>('street')
@@ -405,6 +425,9 @@ export function TutorMap({
       />
 
       <ClusterLayer tutors={tutorsWithCoords} selectedId={selectedId} onSelect={onSelect} />
+
+      {/* D-MAP (GĐ3): nút "Xem hồ sơ" trong popup marker */}
+      {onOpenTutor && <PopupViewProfile onOpenTutor={onOpenTutor} />}
 
       {/* User location marker (always shown if available) */}
       {userLat != null && userLng != null && (

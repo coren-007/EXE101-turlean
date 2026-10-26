@@ -90,8 +90,10 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
   }
 
   const handleRegister = async () => {
-    if (!regName || !regEmail || !regPassword) {
-      toast.error('Vui lòng điền đầy đủ thông tin')
+    // S4 (GĐ3): bao gồm SĐT — input đã đánh dấu required nhưng trước đây không được check
+    // (app không dùng <form> nên native validation không chạy) → client/server giờ nhất quán
+    if (!regName || !regEmail || !regPassword || !regPhone) {
+      toast.error('Vui lòng điền đầy đủ thông tin (bao gồm số điện thoại)')
       return
     }
     if (regPassword.length < 6) {
@@ -208,7 +210,9 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
               {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
             </Button>
 
-            {/* Demo credentials */}
+            {/* Demo credentials — S16 (GĐ3): chỉ hiển thị ở development;
+                production build không render tài khoản demo/mật khẩu */}
+            {process.env.NODE_ENV === 'development' && (
             <div className="rounded-xl bg-muted/50 p-3 text-xs">
               <p className="font-semibold mb-1.5">Tài khoản demo (mật khẩu: 123456):</p>
               <div className="flex gap-2 flex-wrap">
@@ -226,6 +230,7 @@ export function AuthPage({ initialMode }: { initialMode: 'login' | 'register' })
                 </button>
               </div>
             </div>
+            )}
           </TabsContent>
 
           {/* REGISTER */}

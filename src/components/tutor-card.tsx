@@ -66,10 +66,22 @@ function coverGradient(name: string) {
 export function TutorCard({ tutor, compact }: { tutor: Tutor; compact?: boolean }) {
   const { navigate } = useApp()
 
+  const openProfile = () => navigate({ name: 'tutor', id: tutor.id })
+
   return (
     <Card
       className="overflow-hidden cursor-pointer border border-border/80 card-lift group p-0 bg-card"
-      onClick={() => navigate({ name: 'tutor', id: tutor.id })}
+      onClick={openProfile}
+      // S3 (GĐ3 — WCAG 2.1.1): card là nút mở hồ sơ — cho bàn phím & screen reader
+      role="button"
+      tabIndex={0}
+      aria-label={`Xem hồ sơ gia sư ${tutor.name}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          openProfile()
+        }
+      }}
     >
       {/* Cover — phong cách listing Airbnb */}
       <div className={`relative aspect-[4/3] bg-gradient-to-br ${coverGradient(tutor.name)} overflow-hidden`}>

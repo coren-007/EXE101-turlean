@@ -114,9 +114,14 @@ interface ClassInfo {
 }
 
 // Generate time slots from tutor's availability (15-min increments)
+// B-F2 (GĐ3): lọc slot theo THỜI LƯỢNG người dùng chọn — chỉ gợi ý slot mà
+// slotStart + duration <= availabilityEnd. Trước đây hàm hardcode "cần ít nhất 1h"
+// bất kể duration → gợi slot 20:00 (kết thúc 21:30) cho availability kết thúc 21:00,
+// server chặn → user rơi dead-end.
 function generateSlotsFromAvailability(
   availabilities: { dayOfWeek: number; startTime: string; endTime: string }[],
-  selectedDate: string
+  selectedDate: string,
+  durationHours = 1,
 ): string[] {
   if (!selectedDate) return []
   const date = new Date(selectedDate)
@@ -125,20 +130,22 @@ function generateSlotsFromAvailability(
   const daySlots = availabilities.filter(a => a.dayOfWeek === dayOfWeek)
   if (daySlots.length === 0) return []
 
+  const durationMin = Math.round(durationHours * 60)
   const slots: string[] = []
   for (const slot of daySlots) {
     const [startH, startM] = slot.startTime.split(':').map(Number)
     const [endH, endM] = slot.endTime.split(':').map(Number)
     let curH = startH, curM = startM
     while (curH < endH || (curH === endH && curM < endM)) {
-      slots.push(`${String(curH).padStart(2, '0')}:${String(curM).padStart(2, '0')}`)
+      // Slot chỉ hợp lệ khi trọn buổi học nằm trong availability
+      if (curH * 60 + curM + durationMin <= endH * 60 + endM) {
+        slots.push(`${String(curH).padStart(2, '0')}:${String(curM).padStart(2, '0')}`)
+      }
       curM += 30
       if (curM >= 60) {
         curM -= 60
         curH += 1
       }
-      // Stop if next slot would exceed end time by more than 30 min (we need at least 1h)
-      if (curH * 60 + curM + 60 > endH * 60 + endM) break
     }
   }
   return slots.sort()
@@ -467,7 +474,8 @@ export function TutorProfilePage({ id }: { id: string }) {
 
   // Compute available slots from tutor's availability for selected date
   // (chỉ từ slot FREE — lịch cố định không sinh lựa chọn)
-  const availableSlots = tutor ? generateSlotsFromAvailability(tutor.availabilities, bookingDate) : []
+  // B-F2 (GĐ3): truyền duration để lọc slot trọn buổi trong availability
+  const availableSlots = tutor ? generateSlotsFromAvailability(tutor.availabilities, bookingDate, duration) : []
 
   // ===== Lịch bận theo ngày cụ thể (booking đã có trên nền tảng) =====
   // Vô hiệu hóa đúng giờ đã có người đặt — phụ huynh nhìn thấy ngay,
@@ -1217,7 +1225,10 @@ export function TutorProfilePage({ id }: { id: string }) {
                 <Label className="text-sm font-semibold mb-2 block">Thời lượng</Label>
                 <select
                   value={duration}
-                  onChange={(e) => setDuration(Number(e.target.value))}
+                  onChange={(e) => {
+                    setDuration(Number(e.target.value))
+                    setBookingTime('') // B-F2 (GĐ3): đổi thời lượng → giờ đã chọn có thể hết hợp lệ, reset
+                  }}
                   className="w-full border rounded-lg px-3 py-2 text-sm bg-background h-10"
                 >
                   <option value={1}>1 giờ</option>
