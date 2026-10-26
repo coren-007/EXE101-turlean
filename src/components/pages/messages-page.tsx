@@ -61,6 +61,11 @@ export function MessagesPage({ initialConversationId }: { initialConversationId?
         // chọn hội thoại đầu nếu chưa có và được điều hướng tới trang tin nhắn
         setActiveId(prev => prev ?? data.conversations?.[0]?.id)
       }
+      // OPT-2: báo cho Header cập nhật badge số chưa đọc ngay (header giờ chỉ poll 30s
+      // một lần thay vì fetch lại mỗi lần chuyển view)
+      if (data.totalUnread != null) {
+        window.dispatchEvent(new CustomEvent('tc:conv-refresh', { detail: data.totalUnread }))
+      }
     } catch { /* ignore poll errors */ }
   }, [])
 

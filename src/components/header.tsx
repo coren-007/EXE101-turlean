@@ -35,6 +35,10 @@ export function Header() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // OPT-2 (giảm request thừa): trước đây effect này có dep `view` → MỖI lần chuyển
+  // view (home → search → tutor...) đều fetch lại /api/conversations + tạo interval
+  // mới. Giữ nguyên nhịp poll 30s; các trang làm thay đổi trạng thái đã đọc
+  // (Tin nhắn) phát event `tc:conv-refresh` để badge cập nhật tức thì.
   useEffect(() => {
     if (!user) return
     let alive = true
@@ -47,12 +51,19 @@ export function Header() {
         .catch(() => {})
     }
     poll()
+    const onRefresh = (e: Event) => {
+      const n = (e as CustomEvent<number>).detail
+      if (typeof n === 'number') setUnreadCount(n) // có sẵn số liệu → khỏi fetch lại
+      else poll()
+    }
+    window.addEventListener('tc:conv-refresh', onRefresh)
     const timer = setInterval(poll, 30_000)
     return () => {
       alive = false
+      window.removeEventListener('tc:conv-refresh', onRefresh)
       clearInterval(timer)
     }
-  }, [user, view])
+  }, [user])
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' })

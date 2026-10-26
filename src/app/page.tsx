@@ -1,19 +1,42 @@
 'use client'
 
+// OPT-1 (hiệu năng initial load): SPA có 12 view, tổng ~10.000 dòng code client.
+// Trước đây page.tsx import tĩnh TOÀN BỘ view → mọi user phải tải JS của dashboard,
+// admin, onboarding... ngay từ đầu dù chỉ xem trang chủ.
+// Giờ chỉ HomePage (landing) giữ import tĩnh; các view còn lại lazy-load qua
+// next/dynamic + skeleton — chunk riêng được tải đúng lúc cần.
+
 import { useEffect, useSyncExternalStore } from 'react'
+import dynamic from 'next/dynamic'
 import { useApp } from '@/lib/store'
 import { Header } from '@/components/header'
 import { Footer } from '@/components/footer'
 import { HomePage } from '@/components/pages/home-page'
-import { SearchPage } from '@/components/pages/search-page'
-import { TutorProfilePage } from '@/components/pages/tutor-profile-page'
-import { AuthPage } from '@/components/pages/auth-page'
-import { DashboardPage } from '@/components/pages/dashboard-page'
-import { AdminDashboardPage } from '@/components/pages/admin-dashboard-page'
-import { ProfileEditPage } from '@/components/pages/profile-edit-page'
-import { OnboardingPage } from '@/components/pages/onboarding-page'
-import { MessagesPage } from '@/components/pages/messages-page'
-import { FavoritesPage } from '@/components/pages/favorites-page'
+
+// Skeleton chung cho các view đang tải chunk — giữ chiều cao lớn tránh giật layout
+function ViewSkeleton() {
+  return (
+    <div className="container mx-auto max-w-7xl px-4 py-10" aria-busy="true" aria-label="Đang tải trang">
+      <div className="h-8 w-56 rounded-lg bg-muted animate-pulse mb-6" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="h-64 rounded-xl bg-muted/60 animate-pulse" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Lazy-load: chunk chỉ được tải khi user thực sự chuyển sang view tương ứng
+const SearchPage = dynamic(() => import('@/components/pages/search-page').then(m => ({ default: m.SearchPage })), { loading: () => <ViewSkeleton /> })
+const TutorProfilePage = dynamic(() => import('@/components/pages/tutor-profile-page').then(m => ({ default: m.TutorProfilePage })), { loading: () => <ViewSkeleton /> })
+const AuthPage = dynamic(() => import('@/components/pages/auth-page').then(m => ({ default: m.AuthPage })), { loading: () => <ViewSkeleton /> })
+const DashboardPage = dynamic(() => import('@/components/pages/dashboard-page').then(m => ({ default: m.DashboardPage })), { loading: () => <ViewSkeleton /> })
+const AdminDashboardPage = dynamic(() => import('@/components/pages/admin-dashboard-page').then(m => ({ default: m.AdminDashboardPage })), { loading: () => <ViewSkeleton /> })
+const ProfileEditPage = dynamic(() => import('@/components/pages/profile-edit-page').then(m => ({ default: m.ProfileEditPage })), { loading: () => <ViewSkeleton /> })
+const OnboardingPage = dynamic(() => import('@/components/pages/onboarding-page').then(m => ({ default: m.OnboardingPage })), { loading: () => <ViewSkeleton /> })
+const MessagesPage = dynamic(() => import('@/components/pages/messages-page').then(m => ({ default: m.MessagesPage })), { loading: () => <ViewSkeleton /> })
+const FavoritesPage = dynamic(() => import('@/components/pages/favorites-page').then(m => ({ default: m.FavoritesPage })), { loading: () => <ViewSkeleton /> })
 
 export default function Home() {
   const { view, user, setUser } = useApp()
