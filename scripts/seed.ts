@@ -885,6 +885,94 @@ async function main() {
     console.log('✓ Created demo series (8 buổi Toán) + 2 conversations with system notifications')
   }
 
+  // ===== FIX FINDING-002 (QA 2026-10-27): Seed Lớp học nhóm (GroupClass) =====
+  // Trước đây seed KHÔNG tạo GroupClass nào → trang "Lớp học nhóm" (discover) trống,
+  // không demo được tính năng quản lý lớp (điểm danh, sổ học phí, dạy bù).
+  // Buổi học (ClassSession) tự sinh rolling 12 tuần qua ensureRollingSessions khi truy cập.
+  // nextMondayISO: thứ 2 tuần sau (theo giờ VN) — ngày khai giảng mặc định cho lớp seed.
+  const nextMondayISO = () => {
+    const d = new Date(Date.now() + 7 * 86400000)
+    const dow = d.getDay() // 0=CN
+    d.setDate(d.getDate() + ((8 - dow) % 7 || 7))
+    return d.toISOString().slice(0, 10)
+  }
+  try {
+    const byEmail = (e: string) => db.user.findUnique({ where: { email: e } })
+    const tMinhanh = await byEmail('minhanh.tutor@example.com')!
+    const tSarah = await byEmail('sarah.tutor@example.com')!
+    const tKimngan = await byEmail('kimngan.tutor@example.com')!
+    const sHoa = await byEmail('hoa.parent@example.com')!
+    const sMinhtam = await byEmail('minhtam.parent@example.com')!
+    const toanSlug = await db.subject.findUnique({ where: { slug: 'toan-hoc' } })
+    const tiengAnhSlug = await db.subject.findUnique({ where: { slug: 'tieng-anh-giao-tiep' } })
+    const ieltsSlug = await db.subject.findUnique({ where: { slug: 'ielts' } })
+
+    const classDefs: {
+      tutorId: string; subjectId: string; title: string; gradeLevel: string
+      description: string; meetingType: string; address?: string; capacity: number
+      monthlyFee: number; status: string; startDate: string; schedule: { dayOfWeek: number; startTime: string; endTime: string }[]
+      enrollments: { studentId: string; studentName: string; status: string }[]
+    }[] = [
+      {
+        tutorId: tMinhanh!.id, subjectId: toanSlug!.id,
+        title: 'Lớp Toán 10 — Nâng cao', gradeLevel: 'Lớp 10',
+        description: 'Luyện phương pháp tư duy Toán cho học sinh lớp 10, nhóm nhỏ tối đa 6 em tại nhà gia sư (Cầu Giấy).',
+        meetingType: 'AT_TUTOR_HOME', capacity: 6, monthlyFee: 1_200_000, status: 'OPEN',
+        startDate: nextMondayISO(), schedule: [{ dayOfWeek: 6, startTime: '19:00', endTime: '21:00' }],
+        enrollments: [
+          { studentId: sHoa!.id, studentName: 'Bé Hoa (lớp 10)', status: 'APPROVED' },
+          { studentId: sMinhtam!.id, studentName: 'Bé Tâm (lớp 10)', status: 'PENDING' },
+        ],
+      },
+      {
+        tutorId: tSarah!.id, subjectId: tiengAnhSlug!.id,
+        title: 'Lớp Tiếng Anh giao tiếp — S speaking', gradeLevel: 'THCS',
+        description: 'Luyện phản xạ giao tiếp tiếng Anh cho học sinh THCS, học tại nhà gia sư (Quận 1).',
+        meetingType: 'AT_TUTOR_HOME', capacity: 8, monthlyFee: 1_500_000, status: 'OPEN',
+        startDate: nextMondayISO(), schedule: [
+          { dayOfWeek: 3, startTime: '18:30', endTime: '20:00' },
+          { dayOfWeek: 5, startTime: '18:30', endTime: '20:00' },
+        ],
+        enrollments: [{ studentId: sHoa!.id, studentName: 'Bé Hoa', status: 'APPROVED' }],
+      },
+      {
+        tutorId: tKimngan!.id, subjectId: ieltsSlug!.id,
+        title: 'Lớp IELTS Writing 6.0+ Online', gradeLevel: 'THPT',
+        description: 'Luyện kỹ năng Writing IELTS mục tiêu 6.0+, học trực tuyến qua Google Meet.',
+        meetingType: 'ONLINE', capacity: 10, monthlyFee: 2_000_000, status: 'OPEN',
+        startDate: nextMondayISO(), schedule: [{ dayOfWeek: 0, startTime: '09:00', endTime: '11:00' }],
+        enrollments: [{ studentId: sMinhtam!.id, studentName: 'Bé Tâm', status: 'APPROVED' }],
+      },
+    ]
+
+    let classCount = 0, enrollCount = 0
+    for (const def of classDefs) {
+      const gc = await db.groupClass.create({
+        data: {
+          tutorId: def.tutorId, subjectId: def.subjectId, title: def.title,
+          gradeLevel: def.gradeLevel, description: def.description,
+          meetingType: def.meetingType,
+          capacity: def.capacity, monthlyFee: def.monthlyFee, status: def.status,
+          startDate: def.startDate,
+          schedule: { create: def.schedule },
+        },
+      })
+      classCount++
+      for (const en of def.enrollments) {
+        await db.classEnrollment.create({
+          data: {
+            classId: gc.id, studentParentId: en.studentId,
+            studentName: en.studentName, status: en.status,
+          },
+        })
+        enrollCount++
+      }
+    }
+    console.log(`✓ Created ${classCount} lớp học nhóm (GroupClass) + ${enrollCount} enrollments — buổi tự sinh khi truy cập`)
+  } catch (e) {
+    console.log('⚠ Seed lớp học nhóm bị bỏ qua:', (e as Error).message)
+  }
+
   // ===== P6: Admin + xác minh bằng cấp =====
   const daysAgoP6 = (n: number) => new Date(Date.now() - n * 86400000)
   // Tài khoản quản trị viên (không đăng ký công khai được — zod register chỉ TUTOR|STUDENT)

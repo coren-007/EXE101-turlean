@@ -162,6 +162,11 @@ export async function GET(req: NextRequest) {
   const level = searchParams.get('level') // PRIMARY | SECONDARY | HIGH | ALL
   const minPrice = searchParams.get('minPrice')
   const maxPrice = searchParams.get('maxPrice')
+  // FIX BUG-001 (QA 2026-10-27): minPrice/maxPrice không phải số (vd "abc") làm
+  // Number() → NaN đẩy vào Prisma query → HTTP 500. Parse an toàn theo pattern
+  // availDay: giá trị rác → bỏ qua filter thay vì crash.
+  const minPriceNum = minPrice !== null && minPrice !== '' && !Number.isNaN(Number(minPrice)) ? Number(minPrice) : null
+  const maxPriceNum = maxPrice !== null && maxPrice !== '' && !Number.isNaN(Number(maxPrice)) ? Number(maxPrice) : null
   const minRating = searchParams.get('minRating')
   const mode = searchParams.get('mode') // TUTOR_TO_STUDENT | STUDENT_TO_TUTOR | ONLINE
   const userLat = searchParams.get('lat')
@@ -195,8 +200,8 @@ export async function GET(req: NextRequest) {
     // P4: lọc giá đẩy xuống DB (minPrice hiển thị = hourlyRate vì đã yêu cầu > 0)
     hourlyRate: {
       gt: 0,
-      ...(minPrice ? { gte: Number(minPrice) } : {}),
-      ...(maxPrice ? { lte: Number(maxPrice) } : {}),
+      ...(minPriceNum !== null ? { gte: minPriceNum } : {}),
+      ...(maxPriceNum !== null ? { lte: maxPriceNum } : {}),
     },
     tutorSubjects: { some: { subject: subjectFilter } },
   }
@@ -283,9 +288,9 @@ export async function GET(req: NextRequest) {
   // Compute rating and price
   let result = tutors.map(toTutorDto)
 
-  // Apply price filter (after compute minPrice)
-  if (minPrice) result = result.filter(t => t.minPrice >= Number(minPrice))
-  if (maxPrice) result = result.filter(t => t.minPrice <= Number(maxPrice))
+  // Apply price filter (after compute minPrice) — dùng giá trị đã parse an toàn
+  if (minPriceNum !== null) result = result.filter(t => t.minPrice >= minPriceNum)
+  if (maxPriceNum !== null) result = result.filter(t => t.minPrice <= maxPriceNum)
   if (minRating) result = result.filter(t => t.avgRating >= Number(minRating))
 
   // Apply distance filter and compute distance

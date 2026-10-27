@@ -371,9 +371,11 @@ export function OnboardingPage() {
                             className={`rounded-xl border-2 p-3 transition-all ${selected ? 'border-primary bg-primary/5' : 'border-border'}`}
                           >
                             <div className="flex items-center gap-3">
+                              {/* FIX A11Y-003 (QA 2026-10-27): thêm accessible name cho checkbox môn học */}
                               <Checkbox
                                 checked={selected}
                                 onCheckedChange={() => toggleSubject(s.id)}
+                                aria-label={`Môn ${s.name}`}
                               />
                               <span className="font-medium text-sm flex-1">{s.name}</span>
                               {selected && (
@@ -383,6 +385,7 @@ export function OnboardingPage() {
                                     step={50000}
                                     min={50000}
                                     placeholder="Giá/giờ"
+                                    aria-label={`Giá mỗi giờ môn ${s.name}`}
                                     value={mySubjects[s.id].price}
                                     onChange={(e) => {
                                       const v = Number(e.target.value)
@@ -545,6 +548,8 @@ export function OnboardingPage() {
                             <button
                               key={dayIdx}
                               onClick={() => toggleSlot(dayIdx, t)}
+                              aria-label={`${active ? 'Bỏ' : 'Mở'} khung giờ ${DAY_SHORT[dayIdx]} ${t}`}
+                              aria-pressed={active}
                               className={`h-10 rounded-xl text-[10px] font-bold transition-all ${
                                 active
                                   ? 'bg-primary text-primary-foreground shadow-e1 hover:bg-primary/90'
